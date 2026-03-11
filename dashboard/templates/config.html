@@ -1,0 +1,129 @@
+{% extends 'base.html' %}
+{% block title %}Konfiguracja – {{ guild_name }}{% endblock %}
+{% block content %}
+<h4 class="fw-bold mb-4"><i class="bi bi-gear me-2"></i>Konfiguracja – {{ guild_name }}</h4>
+
+<form method="POST" action="{{ url_for('config_save', guild_id=guild_id) }}">
+<div class="row g-4">
+
+  <!-- Channels -->
+  <div class="col-lg-6">
+    <div class="card p-3">
+      <div class="section-title"><i class="bi bi-hash me-1"></i>Kanały</div>
+
+      <div class="mb-3">
+        <label class="form-label text-muted small">📋 Kanał Clock In/Out (apel codzienny)</label>
+        <select name="clock_channel_id" class="form-select bg-dark border-secondary text-white">
+          <option value="">— Nie ustawiony —</option>
+          {% for ch in text_channels %}
+          <option value="{{ ch.id }}" {% if cfg.clock_channel_id == ch.id %}selected{% endif %}>
+            #{{ ch.name }}
+          </option>
+          {% endfor %}
+        </select>
+        <small class="text-muted">Bot wysyła tutaj codzienny apel z przyciskami Clock In/Out.</small>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label text-muted small">📝 Kanał logów</label>
+        <select name="log_channel_id" class="form-select bg-dark border-secondary text-white">
+          <option value="">— Nie ustawiony —</option>
+          {% for ch in text_channels %}
+          <option value="{{ ch.id }}" {% if cfg.log_channel_id == ch.id %}selected{% endif %}>
+            #{{ ch.name }}
+          </option>
+          {% endfor %}
+        </select>
+        <small class="text-muted">Bot loguje tutaj akcje clock in/out i zmiany rang.</small>
+      </div>
+    </div>
+  </div>
+
+  <!-- Points -->
+  <div class="col-lg-6">
+    <div class="card p-3">
+      <div class="section-title"><i class="bi bi-coin me-1"></i>System punktów</div>
+
+      <div class="mb-3">
+        <label class="form-label text-muted small">💰 Punkty za godzinę aktywności</label>
+        <div class="input-group">
+          <input type="number" name="points_per_hour"
+                 class="form-control bg-dark border-secondary text-white"
+                 value="{{ cfg.points_per_hour | round(1) }}" step="0.5" min="0.1">
+          <span class="input-group-text bg-dark border-secondary text-muted">pkt/h</span>
+        </div>
+        <small class="text-muted">Ile punktów użytkownik zdobywa za każdą godzinę aktywności.</small>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label text-muted small">⏱️ Minimalny czas sesji (minuty)</label>
+        <div class="input-group">
+          <input type="number" name="min_clock_minutes"
+                 class="form-control bg-dark border-secondary text-white"
+                 value="{{ cfg.min_clock_minutes }}" step="1" min="1">
+          <span class="input-group-text bg-dark border-secondary text-muted">min</span>
+        </div>
+        <small class="text-muted">Sesje krótsze niż ta wartość nie dają punktów.</small>
+      </div>
+    </div>
+  </div>
+
+  <!-- Admin roles -->
+  <div class="col-12">
+    <div class="card p-3">
+      <div class="section-title"><i class="bi bi-shield me-1"></i>Role administratora bota</div>
+      <p class="text-muted small">Zaznacz role, których członkowie będą mogli używać komend adminowych bota (np. `.addpoints`, `.giverank`).</p>
+      <div class="row g-2">
+        {% for role in guild_roles %}
+        {% if role.name != '@everyone' %}
+        <div class="col-md-4 col-lg-3">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="admin_role_ids"
+                   value="{{ role.id }}" id="role_{{ role.id }}"
+                   {% if role.id in admin_role_ids %}checked{% endif %}>
+            <label class="form-check-label text-white" for="role_{{ role.id }}">
+              {{ role.name }}
+            </label>
+          </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+      </div>
+      <small class="text-muted mt-2 d-block">Użytkownicy z uprawnieniem <strong>Zarządzaj serwerem</strong> zawsze mają dostęp.</small>
+    </div>
+  </div>
+
+  <div class="col-12">
+    <button type="submit" class="btn btn-discord">
+      <i class="bi bi-save me-1"></i>Zapisz konfigurację
+    </button>
+  </div>
+</div>
+</form>
+
+<hr class="border-secondary my-4">
+
+<!-- Quick commands reference -->
+<div class="card p-3">
+  <div class="section-title"><i class="bi bi-terminal me-1"></i>Szybkie komendy konfiguracyjne (Discord)</div>
+  <div class="row g-2">
+    {% set cmds = [
+      ('.setchannel clock #kanał', 'Ustawia kanał codziennego apelu'),
+      ('.setchannel log #kanał', 'Ustawia kanał logów'),
+      ('.setpoints_h <n>', 'Ustawia punkty za godzinę'),
+      ('.adminrole @rola', 'Dodaje rolę admina bota'),
+      ('.removeadminrole @rola', 'Usuwa rolę admina bota'),
+      ('.apel', 'Wymusza wysłanie apelu na bieżący kanał'),
+      ('.config', 'Pokazuje aktualną konfigurację'),
+    ] %}
+    {% for cmd, desc in cmds %}
+    <div class="col-md-6">
+      <div class="d-flex gap-2 align-items-center">
+        <code class="text-warning">{{ cmd }}</code>
+        <small class="text-muted">– {{ desc }}</small>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

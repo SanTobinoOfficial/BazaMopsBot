@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block title %}Wybór Serwera{% endblock %}
+{% block content %}
+<h4 class="fw-bold mb-4"><i class="bi bi-grid me-2"></i>Wybierz serwer</h4>
+{% if guilds %}
+<div class="row g-3">
+  {% for g in guilds %}
+  <div class="col-md-4 col-lg-3">
+    <a href="/guild/{{ g.guild_id }}" class="text-decoration-none">
+      <div class="card h-100 p-3 text-center hover-card">
+        {% if g.icon %}
+        <img src="https://cdn.discordapp.com/icons/{{ g.guild_id }}/{{ g.icon }}.png"
+             class="avatar-lg mx-auto mb-2" alt="{{ g.name }}">
+        {% else %}
+        <div class="avatar-lg avatar-placeholder mx-auto mb-2 fs-4">
+          {{ g.name[0] | upper }}
+        </div>
+        {% endif %}
+        <h6 class="fw-bold text-white mb-1">{{ g.name }}</h6>
+        <small class="text-muted">ID: {{ g.guild_id }}</small>
+      </div>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card p-5 text-center">
+  <i class="bi bi-discord fs-1 text-muted mb-3"></i>
+  <p class="text-muted">Bot nie jest dodany do żadnego serwera.</p>
+</div>
+{% endif %}
+{% endblock %}

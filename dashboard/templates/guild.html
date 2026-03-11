@@ -1,0 +1,140 @@
+{% extends 'base.html' %}
+{% block title %}{{ guild_name }} – Przegląd{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-4">
+  {% if icon_url %}
+  <img src="{{ icon_url }}" class="avatar-lg" alt="{{ guild_name }}">
+  {% else %}
+  <div class="avatar-lg avatar-placeholder fs-3">{{ guild_name[0] | upper }}</div>
+  {% endif %}
+  <div>
+    <h3 class="fw-bold text-white mb-0">{{ guild_name }}</h3>
+    <small class="text-muted">ID: {{ guild_id }}</small>
+  </div>
+</div>
+
+<!-- Stats -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card stat-card p-3">
+      <div class="section-title">Użytkownicy</div>
+      <div class="stat-number">{{ stats.total_users }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card stat-card green p-3">
+      <div class="section-title">Aktywnych teraz</div>
+      <div class="stat-number text-success">{{ stats.active_now }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card stat-card yellow p-3">
+      <div class="section-title">Łączne godziny</div>
+      <div class="stat-number" style="color: var(--discord-yellow)">{{ stats.total_hours }}h</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card stat-card p-3">
+      <div class="section-title">Łączne punkty</div>
+      <div class="stat-number">{{ stats.total_points | round(0) | int }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4">
+  <!-- Top 5 -->
+  <div class="col-lg-6">
+    <div class="card p-3">
+      <div class="section-title"><i class="bi bi-trophy me-1"></i>Top 5 Ranking</div>
+      {% if top %}
+      <table class="table table-sm mb-0">
+        <tbody>
+        {% for u in top %}
+        <tr>
+          <td class="text-muted" style="width:30px">
+            {% if loop.index == 1 %}🥇{% elif loop.index == 2 %}🥈{% elif loop.index == 3 %}🥉{% else %}{{ loop.index }}.{% endif %}
+          </td>
+          <td>
+            <a href="{{ url_for('user_detail', guild_id=guild_id, user_id=u.user_id) }}"
+               class="text-white text-decoration-none">
+              {{ u.display_name or u.username or u.user_id }}
+            </a>
+          </td>
+          <td class="text-end">
+            <span class="badge points-badge">{{ u.points | round(1) }} pkt</span>
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="text-muted small mb-0">Brak danych rankingowych.</p>
+      {% endif %}
+      <div class="mt-2 text-end">
+        <a href="{{ url_for('users_list', guild_id=guild_id) }}" class="btn btn-sm btn-outline-secondary">
+          Zobacz wszystkich
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Active now -->
+  <div class="col-lg-6">
+    <div class="card p-3">
+      <div class="section-title"><i class="bi bi-circle-fill text-success me-1" style="font-size:.6rem"></i>Zalogowani teraz</div>
+      {% if active_now %}
+      <ul class="list-unstyled mb-0">
+        {% for u in active_now %}
+        <li class="d-flex align-items-center gap-2 mb-1">
+          <span class="active-dot"></span>
+          <a href="{{ url_for('user_detail', guild_id=guild_id, user_id=u.user_id) }}"
+             class="text-white text-decoration-none">
+            {{ u.display_name or u.username or u.user_id }}
+          </a>
+          {% if u.clock_in_time %}
+          <small class="text-muted ms-auto">od {{ u.clock_in_time[11:16] }}</small>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="text-muted small mb-0">Nikt nie jest teraz aktywny.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Recent transactions -->
+  <div class="col-12">
+    <div class="card p-3">
+      <div class="section-title"><i class="bi bi-clock-history me-1"></i>Ostatnie transakcje punktów</div>
+      {% if recent_tx %}
+      <table class="table table-sm table-hover mb-0">
+        <thead>
+          <tr><th>Data</th><th>Użytkownik</th><th>Zmiana</th><th>Typ</th><th>Nota</th></tr>
+        </thead>
+        <tbody>
+        {% for t in recent_tx %}
+        <tr>
+          <td class="text-muted small">{{ t.created_at[:16] | replace('T', ' ') }}</td>
+          <td>
+            <a href="{{ url_for('user_detail', guild_id=guild_id, user_id=t.user_id) }}"
+               class="text-white text-decoration-none">{{ t.user_id }}</a>
+          </td>
+          <td>
+            <span class="fw-bold {% if t.points_change > 0 %}text-success{% else %}text-danger{% endif %}">
+              {% if t.points_change > 0 %}+{% endif %}{{ t.points_change | round(1) }}
+            </span>
+          </td>
+          <td><span class="badge bg-secondary">{{ t.transaction_type }}</span></td>
+          <td class="text-muted small">{{ (t.note or '')[:50] }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="text-muted small mb-0">Brak transakcji.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

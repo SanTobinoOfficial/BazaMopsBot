@@ -1,0 +1,221 @@
+{% extends 'base.html' %}
+{% block title %}{{ user.display_name or user_id }} – Profil{% endblock %}
+{% block content %}
+
+<div class="d-flex align-items-center gap-2 mb-3">
+  <a href="{{ url_for('users_list', guild_id=guild_id) }}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left"></i>
+  </a>
+  <h4 class="fw-bold mb-0">Profil użytkownika</h4>
+</div>
+
+<div class="row g-4">
+  <!-- Left: User card -->
+  <div class="col-lg-4">
+    <div class="card p-4 text-center">
+      {% if avatar_url %}
+      <img src="{{ avatar_url }}" class="avatar-lg mx-auto mb-3" alt="Avatar">
+      {% else %}
+      <div class="avatar-lg avatar-placeholder mx-auto mb-3 fs-2">
+        {{ (user.display_name or user.username or '?')[0] | upper }}
+      </div>
+      {% endif %}
+      <h5 class="fw-bold text-white mb-0">{{ user.display_name or user.username or user_id }}</h5>
+      <small class="text-muted">{{ user.username }}</small>
+      <div class="mt-1"><small class="text-muted">ID: {{ user_id }}</small></div>
+
+      <div class="row g-2 mt-3 text-start">
+        <div class="col-6">
+          <div class="card p-2 text-center">
+            <div class="section-title">Punkty</div>
+            <div class="fw-bold text-white">{{ user.points | round(1) }}</div>
+          </div>
+        </div>
+        <div class="col-6">
+          <div class="card p-2 text-center">
+            <div class="section-title">Godziny</div>
+            <div class="fw-bold text-white">{{ user.total_hours | round(1) }}h</div>
+          </div>
+        </div>
+        <div class="col-6">
+          <div class="card p-2 text-center">
+            <div class="section-title">Sesje</div>
+            <div class="fw-bold text-white">{{ user.sessions_count }}</div>
+          </div>
+        </div>
+        <div class="col-6">
+          <div class="card p-2 text-center">
+            <div class="section-title">Status</div>
+            <div>
+              {% if user.is_clocked_in %}<span class="text-success fw-bold">🟢 Aktywny</span>
+              {% else %}<span class="text-muted">⚫ Nieakt.</span>{% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {% if user.is_banned %}
+      <div class="alert alert-danger mt-3 py-2 mb-0">⚠️ Zablokowany na liście rankingowej</div>
+      {% endif %}
+    </div>
+
+    <!-- Ranks card -->
+    <div class="card p-3 mt-3">
+      <div class="section-title"><i class="bi bi-star me-1"></i>Rangi</div>
+      {% if auto_rank %}
+      <div class="mb-2">
+        <span class="badge" style="background:{{ auto_rank.color }};color:#fff">
+          {{ auto_rank.icon }} {{ auto_rank.name }}
+        </span>
+        <small class="text-muted ms-1">auto ({{ auto_rank.required_points | round(0) | int }} pkt)</small>
+      </div>
+      {% else %}
+      <p class="text-muted small">Brak rangi automatycznej.</p>
+      {% endif %}
+      {% for sr in specials %}
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <span class="badge" style="background:{{ sr.color }};color:#fff">
+          {{ sr.icon }} {{ sr.name }}
+        </span>
+        <small class="text-muted">{{ sr.note or '' }}</small>
+        <form method="POST" action="{{ url_for('take_rank_action', guild_id=guild_id, user_id=user_id, rank_id=sr.id) }}"
+              class="ms-auto" onsubmit="return confirm('Odebrać rangę?')">
+          <button class="btn btn-sm btn-outline-danger py-0 px-1"><i class="bi bi-x"></i></button>
+        </form>
+      </div>
+      {% endfor %}
+
+      {% if all_special_ranks %}
+      <hr class="border-secondary">
+      <div class="section-title">Nadaj rangę specjalną</div>
+      <form method="POST" action="{{ url_for('give_rank_action', guild_id=guild_id, user_id=user_id) }}">
+        <select name="rank_id" class="form-select form-select-sm bg-dark border-secondary text-white mb-2">
+          {% for r in all_special_ranks %}
+          <option value="{{ r.id }}">{{ r.icon }} {{ r.name }}</option>
+          {% endfor %}
+        </select>
+        <input type="text" name="note" class="form-control form-control-sm bg-dark border-secondary text-white mb-2"
+               placeholder="Nota (opcjonalna)">
+        <button class="btn btn-sm btn-discord w-100">Nadaj rangę</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Right: Actions + History -->
+  <div class="col-lg-8">
+    <!-- Points actions -->
+    <div class="card p-3 mb-3">
+      <div class="section-title"><i class="bi bi-coin me-1"></i>Zarządzanie punktami</div>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <form method="POST" action="{{ url_for('add_points_action', guild_id=guild_id, user_id=user_id) }}">
+            <div class="input-group mb-2">
+              <select name="operation" class="form-select form-select-sm bg-dark border-secondary text-white" style="max-width:110px">
+                <option value="add">+ Dodaj</option>
+                <option value="subtract">− Odejmij</option>
+              </select>
+              <input type="number" name="points" class="form-control form-control-sm bg-dark border-secondary text-white"
+                     placeholder="Liczba" step="0.1" min="0" required>
+            </div>
+            <input type="text" name="note" class="form-control form-control-sm bg-dark border-secondary text-white mb-2"
+                   placeholder="Nota (wymagana)" required>
+            <button class="btn btn-sm btn-discord">Wykonaj</button>
+          </form>
+        </div>
+        <div class="col-md-6">
+          <form method="POST" action="{{ url_for('set_points_action', guild_id=guild_id, user_id=user_id) }}">
+            <div class="input-group mb-2">
+              <span class="input-group-text bg-dark border-secondary text-muted">= Ustaw</span>
+              <input type="number" name="points" class="form-control form-control-sm bg-dark border-secondary text-white"
+                     placeholder="Docelowa liczba" step="0.1" min="0" required>
+            </div>
+            <input type="text" name="note" class="form-control form-control-sm bg-dark border-secondary text-white mb-2"
+                   placeholder="Nota (wymagana)" required>
+            <button class="btn btn-sm btn-outline-warning">Ustaw punkty</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Danger zone -->
+    <div class="card p-3 mb-3 border-danger" style="border-color: rgba(240,71,71,.4) !important">
+      <div class="section-title text-danger"><i class="bi bi-exclamation-triangle me-1"></i>Strefa Niebezpieczna</div>
+      <div class="d-flex flex-wrap gap-2">
+        {% if user.is_banned %}
+        <form method="POST" action="{{ url_for('unban_user', guild_id=guild_id, user_id=user_id) }}">
+          <button class="btn btn-sm btn-success">✅ Odblokuj z rankingu</button>
+        </form>
+        {% else %}
+        <form method="POST" action="{{ url_for('ban_user', guild_id=guild_id, user_id=user_id) }}"
+              onsubmit="return confirm('Zablokować użytkownika na liście rankingowej?')">
+          <button class="btn btn-sm btn-warning">🔨 Zablokuj z rankingu</button>
+        </form>
+        {% endif %}
+        <form method="POST" action="{{ url_for('reset_user_action', guild_id=guild_id, user_id=user_id) }}"
+              onsubmit="return confirm('UWAGA: Zresetować WSZYSTKIE dane użytkownika? Tej operacji nie można cofnąć!')">
+          <button class="btn btn-sm btn-danger">🗑️ Resetuj dane</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Transaction history -->
+    <div class="card p-3 mb-3">
+      <div class="section-title"><i class="bi bi-list-ul me-1"></i>Historia Transakcji</div>
+      {% if txs %}
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+          <thead><tr><th>Data</th><th>Zmiana</th><th>Przed</th><th>Po</th><th>Typ</th><th>Nota</th></tr></thead>
+          <tbody>
+          {% for t in txs %}
+          <tr>
+            <td class="text-muted small">{{ t.created_at[:16] | replace('T', ' ') }}</td>
+            <td class="fw-bold {% if t.points_change > 0 %}text-success{% else %}text-danger{% endif %}">
+              {% if t.points_change > 0 %}+{% endif %}{{ t.points_change | round(1) }}
+            </td>
+            <td class="text-muted small">{{ t.points_before | round(1) }}</td>
+            <td class="text-muted small">{{ t.points_after | round(1) }}</td>
+            <td><span class="badge bg-secondary">{{ t.transaction_type }}</span></td>
+            <td class="text-muted small" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              {{ t.note or '—' }}
+            </td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="text-muted small mb-0">Brak historii transakcji.</p>
+      {% endif %}
+    </div>
+
+    <!-- Session history -->
+    <div class="card p-3">
+      <div class="section-title"><i class="bi bi-clock-history me-1"></i>Historia Sesji Clock In/Out</div>
+      {% if sessions %}
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+          <thead><tr><th>Data</th><th>Clock In</th><th>Clock Out</th><th>Czas</th><th>Punkty</th></tr></thead>
+          <tbody>
+          {% for s in sessions %}
+          <tr>
+            <td class="text-muted small">{{ s.session_date }}</td>
+            <td class="text-muted small">{{ s.clock_in_time[11:16] if s.clock_in_time else '—' }}</td>
+            <td class="text-muted small">
+              {% if s.clock_out_time %}{{ s.clock_out_time[11:16] }}
+              {% else %}<span class="badge bg-success">🟢 Aktywna</span>{% endif %}
+            </td>
+            <td class="text-muted small">{{ (s.hours_worked * 60) | round(0) | int }} min</td>
+            <td class="fw-bold text-success">+{{ s.points_earned | round(1) }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="text-muted small mb-0">Brak historii sesji.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

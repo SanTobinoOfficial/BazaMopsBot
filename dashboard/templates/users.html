@@ -1,0 +1,82 @@
+{% extends 'base.html' %}
+{% block title %}Użytkownicy – {{ guild_name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h4 class="fw-bold mb-0"><i class="bi bi-people me-2"></i>Użytkownicy – {{ guild_name }}</h4>
+  <input type="text" id="searchInput" class="form-control form-control-sm bg-dark border-secondary text-white"
+         placeholder="🔍 Szukaj..." style="max-width:220px">
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0" id="usersTable">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Użytkownik</th>
+          <th>Punkty</th>
+          <th>Godziny</th>
+          <th>Sesje</th>
+          <th>Status</th>
+          <th>Akcje</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for u in users %}
+      <tr class="user-row">
+        <td class="text-muted">{{ loop.index }}</td>
+        <td>
+          <div class="d-flex align-items-center gap-2">
+            <div class="avatar-sm avatar-placeholder" style="width:32px;height:32px;font-size:.75rem">
+              {{ (u.display_name or u.username or '?')[0] | upper }}
+            </div>
+            <div>
+              <div class="text-white fw-semibold user-name">
+                {{ u.display_name or u.username or u.user_id }}
+              </div>
+              <small class="text-muted">{{ u.user_id }}</small>
+            </div>
+          </div>
+        </td>
+        <td>
+          <span class="badge points-badge fs-6">{{ u.points | round(1) }}</span>
+        </td>
+        <td class="text-muted">{{ u.total_hours | round(1) }}h</td>
+        <td class="text-muted">{{ u.sessions_count }}</td>
+        <td>
+          {% if u.is_clocked_in %}
+            <span class="badge bg-success">🟢 Aktywny</span>
+          {% else %}
+            <span class="badge bg-secondary">⚫ Nieaktywny</span>
+          {% endif %}
+          {% if u.is_banned %}
+            <span class="badge bg-danger ms-1">🔨 Zablokowany</span>
+          {% endif %}
+        </td>
+        <td>
+          <a href="{{ url_for('user_detail', guild_id=guild_id, user_id=u.user_id) }}"
+             class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-eye"></i>
+          </a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="text-center text-muted py-4">Brak użytkowników.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+  document.getElementById('searchInput').addEventListener('input', function() {
+    const q = this.value.toLowerCase();
+    document.querySelectorAll('.user-row').forEach(row => {
+      const name = row.querySelector('.user-name')?.textContent.toLowerCase() || '';
+      const id = row.querySelectorAll('td')[1]?.textContent.toLowerCase() || '';
+      row.style.display = (name.includes(q) || id.includes(q)) ? '' : 'none';
+    });
+  });
+</script>
+{% endblock %}

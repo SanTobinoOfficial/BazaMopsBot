@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block title %}Logowanie{% endblock %}
+{% block content %}
+<div class="min-vh-100 d-flex align-items-center justify-content-center" style="background: #1e2124;">
+  <div class="card p-4 shadow" style="width: 380px;">
+    <div class="text-center mb-4">
+      <div class="fs-1 mb-2">🛡️</div>
+      <h4 class="fw-bold text-white mb-1">System Rang</h4>
+      <p class="text-muted small">Panel Administracyjny</p>
+    </div>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in messages %}
+        <div class="alert alert-{{ cat }} py-2">{{ msg }}</div>
+      {% endfor %}
+    {% endwith %}
+    <form method="POST">
+      <div class="mb-3">
+        <label class="form-label text-muted small">Hasło dostępu</label>
+        <input type="password" name="password" class="form-control bg-dark border-secondary text-white"
+               placeholder="Wprowadź hasło" autofocus required>
+      </div>
+      <button type="submit" class="btn btn-discord w-100">
+        <i class="bi bi-lock-fill me-2"></i>Zaloguj się
+      </button>
+    </form>
+    <hr class="border-secondary mt-4">
+    <p class="text-muted text-center small mb-0">
+      Ustaw hasło przez zmienną środowiskową <code>DASHBOARD_PASSWORD</code>
+    </p>
+  </div>
+</div>
+{% endblock %}
