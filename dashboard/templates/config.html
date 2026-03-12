@@ -86,7 +86,7 @@
           <tbody>
             {% set day_names = ['Poniedziałek','Wtorek','Środa','Czwartek','Piątek','Sobota','Niedziela'] %}
             {% for i in range(7) %}
-            {% set day = schedule[i] if schedule and i < schedule|length else {'hour': 8, 'minute': 0, 'enabled': true} %}
+            {% set day = schedule[i|string] if schedule and (i|string) in schedule else {'hour': 8, 'minute': 0, 'enabled': true} %}
             <tr>
               <td class="fw-semibold text-white">{{ day_names[i] }}</td>
               <td>
