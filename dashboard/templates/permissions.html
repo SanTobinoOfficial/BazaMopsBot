@@ -13,7 +13,7 @@
   Użytkownicy z uprawnieniem <strong>Zarządzaj serwerem</strong> zawsze mają dostęp do komend admina.
 </div>
 
-<form method="POST" action="{{ url_for('guild_permissions', guild_id=guild_id) }}">
+<form method="POST" action="{{ url_for('permissions_page', guild_id=guild_id) }}">
 <div class="row g-4">
 
   {% for category, commands in command_list.items() %}
@@ -103,7 +103,7 @@
 </form>
 
 <form id="reset-form" method="POST"
-      action="{{ url_for('guild_permissions', guild_id=guild_id) }}?reset=1" style="display:none;"></form>
+      action="{{ url_for('permissions_page', guild_id=guild_id) }}?reset=1" style="display:none;"></form>
 
 {% endblock %}
 

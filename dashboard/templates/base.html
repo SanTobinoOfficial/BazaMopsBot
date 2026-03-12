@@ -97,20 +97,20 @@
       <small class="px-3 text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;">Zarządzanie</small>
     </li>
     <li class="nav-item">
-      <a class="nav-link {% if request.endpoint == 'guild_announcements' %}active{% endif %}"
-         href="{{ url_for('guild_announcements', guild_id=guild_id) }}">
+      <a class="nav-link {% if request.endpoint == 'announcements_page' %}active{% endif %}"
+         href="{{ url_for('announcements_page', guild_id=guild_id) }}">
         <i class="bi bi-megaphone me-2"></i>Ogłoszenia
       </a>
     </li>
     <li class="nav-item">
-      <a class="nav-link {% if request.endpoint == 'guild_permissions' %}active{% endif %}"
-         href="{{ url_for('guild_permissions', guild_id=guild_id) }}">
+      <a class="nav-link {% if request.endpoint == 'permissions_page' %}active{% endif %}"
+         href="{{ url_for('permissions_page', guild_id=guild_id) }}">
         <i class="bi bi-key me-2"></i>Uprawnienia
       </a>
     </li>
     <li class="nav-item">
-      <a class="nav-link {% if request.endpoint == 'guild_logs' %}active{% endif %}"
-         href="{{ url_for('guild_logs', guild_id=guild_id) }}">
+      <a class="nav-link {% if request.endpoint == 'logs_page' %}active{% endif %}"
+         href="{{ url_for('logs_page', guild_id=guild_id) }}">
         <i class="bi bi-journal-text me-2"></i>Logi
       </a>
     </li>
