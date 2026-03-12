@@ -1,0 +1,257 @@
+{% extends 'base.html' %}
+{% block title %}Logi – {{ guild_name }}{% endblock %}
+{% block extra_head %}
+<style>
+  .log-entry {
+    border-left: 3px solid rgba(255,255,255,.1);
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    background: rgba(255,255,255,.02);
+    border-radius: 0 6px 6px 0;
+    transition: background .15s;
+  }
+  .log-entry:hover { background: rgba(255,255,255,.05); }
+  .log-entry.clockin  { border-left-color: #43b581; }
+  .log-entry.clockout { border-left-color: #7289da; }
+  .log-entry.points   { border-left-color: #faa61a; }
+  .log-entry.rank     { border-left-color: #9b59b6; }
+  .log-entry.warn     { border-left-color: #f04747; }
+  .log-entry.ban      { border-left-color: #f04747; }
+  .log-entry.anticheat { border-left-color: #e67e22; }
+  .log-time { font-size: .75rem; color: #72767d; white-space: nowrap; }
+  .log-type-badge {
+    font-size: .65rem;
+    padding: 2px 7px;
+    border-radius: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+  }
+  .warn-card {
+    background: rgba(240,71,71,.06);
+    border: 1px solid rgba(240,71,71,.2);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 6px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h4 class="fw-bold mb-0"><i class="bi bi-journal-text me-2"></i>Logi – {{ guild_name }}</h4>
+  <div class="d-flex gap-2">
+    <select id="filterType" class="form-select form-select-sm bg-dark border-secondary text-white" style="width:auto">
+      <option value="">Wszystkie typy</option>
+      <option value="clock_in">Clock In</option>
+      <option value="clock_out">Clock Out</option>
+      <option value="points">Punkty</option>
+      <option value="rank">Rangi</option>
+      <option value="warn">Warny</option>
+      <option value="ban">Bany</option>
+      <option value="anti_cheat">Anty-cheat</option>
+    </select>
+    <input type="text" id="filterUser" class="form-control form-control-sm bg-dark border-secondary text-white"
+           placeholder="Szukaj user ID..." style="width:180px">
+  </div>
+</div>
+
+<!-- Tabs -->
+<ul class="nav nav-tabs mb-4" id="logTabs">
+  <li class="nav-item">
+    <a class="nav-link {% if not tab or tab == 'actions' %}active{% endif %}"
+       href="{{ url_for('guild_logs', guild_id=guild_id) }}?tab=actions">
+      <i class="bi bi-list-ul me-1"></i>Logi akcji
+      {% if action_logs %}<span class="badge bg-secondary ms-1">{{ action_logs | length }}</span>{% endif %}
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if tab == 'warnings' %}active{% endif %}"
+       href="{{ url_for('guild_logs', guild_id=guild_id) }}?tab=warnings">
+      <i class="bi bi-exclamation-triangle me-1"></i>Warny
+      {% if all_warnings %}<span class="badge bg-danger ms-1">{{ all_warnings | length }}</span>{% endif %}
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if tab == 'transactions' %}active{% endif %}"
+       href="{{ url_for('guild_logs', guild_id=guild_id) }}?tab=transactions">
+      <i class="bi bi-coin me-1"></i>Transakcje punktów
+      {% if transactions %}<span class="badge bg-secondary ms-1">{{ transactions | length }}</span>{% endif %}
+    </a>
+  </li>
+</ul>
+
+<!-- Actions tab -->
+{% if not tab or tab == 'actions' %}
+<div id="actionLogsList">
+  {% if action_logs %}
+    {% for log in action_logs %}
+    {% set details = log.details_parsed or {} %}
+    <div class="log-entry {{ log.action_type | replace('_', '') }}"
+         data-type="{{ log.action_type }}"
+         data-user="{{ (details.get('user_id', '') or details.get('target', '') or log.actor_id or '') | lower }}">
+      <div class="d-flex align-items-start gap-3">
+        <div class="flex-shrink-0 mt-1">
+          {% if log.action_type == 'clock_in' %}
+            <span class="log-type-badge" style="background:rgba(67,181,129,.2);color:#43b581;">▶ Clock In</span>
+          {% elif log.action_type == 'clock_out' %}
+            <span class="log-type-badge" style="background:rgba(114,137,218,.2);color:#7289da;">⏹ Clock Out</span>
+          {% elif 'points' in log.action_type %}
+            <span class="log-type-badge" style="background:rgba(250,166,26,.2);color:#faa61a;">💰 Punkty</span>
+          {% elif 'rank' in log.action_type %}
+            <span class="log-type-badge" style="background:rgba(155,89,182,.2);color:#9b59b6;">🎖 Ranga</span>
+          {% elif log.action_type == 'warn' %}
+            <span class="log-type-badge" style="background:rgba(240,71,71,.2);color:#f04747;">⚠️ Warn</span>
+          {% elif log.action_type in ('ban', 'unban') %}
+            <span class="log-type-badge" style="background:rgba(240,71,71,.2);color:#f04747;">🔨 {{ log.action_type | upper }}</span>
+          {% elif log.action_type == 'anti_cheat' %}
+            <span class="log-type-badge" style="background:rgba(230,126,34,.2);color:#e67e22;">🤖 Anty-cheat</span>
+          {% else %}
+            <span class="log-type-badge bg-secondary">{{ log.action_type | upper }}</span>
+          {% endif %}
+        </div>
+        <div class="flex-grow-1 min-w-0">
+          <div class="d-flex flex-wrap gap-2 align-items-baseline">
+            {% if details.get('user_id') or details.get('target') %}
+            <a href="{{ url_for('user_detail', guild_id=guild_id, user_id=details.get('user_id') or details.get('target')) }}"
+               class="text-white fw-semibold text-decoration-none small">
+              {{ details.get('user_id') or details.get('target') }}
+            </a>
+            {% endif %}
+            {% if details.get('actor_id') %}
+            <small class="text-muted">przez <strong>{{ details.get('actor_id') }}</strong></small>
+            {% endif %}
+          </div>
+          <div class="text-muted small mt-1">
+            {% for k, v in details.items() %}
+              {% if k not in ('user_id', 'actor_id', 'target') %}
+                <span class="me-3"><strong class="text-secondary">{{ k }}:</strong> {{ v }}</span>
+              {% endif %}
+            {% endfor %}
+          </div>
+        </div>
+        <div class="flex-shrink-0 text-end">
+          <span class="log-time">{{ log.created_at[:16] | replace('T', ' ') }}</span>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+  <div class="text-center py-5 text-muted">
+    <i class="bi bi-journal-x" style="font-size:2rem;"></i>
+    <p class="mt-2">Brak logów akcji.</p>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- Warnings tab -->
+{% if tab == 'warnings' %}
+{% if all_warnings %}
+  {% for w in all_warnings %}
+  <div class="warn-card d-flex align-items-start gap-3">
+    <div class="flex-shrink-0">
+      <span style="font-size:1.4rem;">⚠️</span>
+    </div>
+    <div class="flex-grow-1">
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <a href="{{ url_for('user_detail', guild_id=guild_id, user_id=w.user_id) }}"
+           class="text-white fw-semibold text-decoration-none">{{ w.user_id }}</a>
+        {% if w.warned_by %}
+        <small class="text-muted">• przez <strong>{{ w.warned_by }}</strong></small>
+        {% endif %}
+        <span class="badge bg-danger ms-auto">Warn #{{ loop.index }}</span>
+      </div>
+      <div class="text-muted small">
+        <i class="bi bi-chat-left-text me-1"></i>{{ w.reason or 'Brak powodu' }}
+      </div>
+    </div>
+    <div class="flex-shrink-0">
+      <span class="log-time">{{ w.created_at[:16] | replace('T', ' ') }}</span>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+<div class="text-center py-5 text-muted">
+  <i class="bi bi-emoji-smile" style="font-size:2rem;"></i>
+  <p class="mt-2">Brak warnów. 🎉</p>
+</div>
+{% endif %}
+{% endif %}
+
+<!-- Transactions tab -->
+{% if tab == 'transactions' %}
+{% if transactions %}
+<div class="table-responsive">
+  <table class="table table-hover align-middle">
+    <thead>
+      <tr>
+        <th>Data</th>
+        <th>Użytkownik</th>
+        <th>Zmiana</th>
+        <th>Saldo po</th>
+        <th>Typ</th>
+        <th>Nota</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for t in transactions %}
+    <tr>
+      <td class="text-muted small">{{ t.created_at[:16] | replace('T', ' ') }}</td>
+      <td>
+        <a href="{{ url_for('user_detail', guild_id=guild_id, user_id=t.user_id) }}"
+           class="text-white text-decoration-none">{{ t.user_id }}</a>
+      </td>
+      <td>
+        <span class="fw-bold {% if t.points_change > 0 %}text-success{% elif t.points_change < 0 %}text-danger{% else %}text-muted{% endif %}">
+          {% if t.points_change > 0 %}+{% endif %}{{ t.points_change | round(2) }}
+        </span>
+      </td>
+      <td class="text-muted">{{ t.balance_after | round(1) if t.balance_after is not none else '—' }}</td>
+      <td>
+        {% if t.transaction_type == 'clock' %}
+          <span class="badge" style="background:rgba(67,181,129,.2);color:#43b581;">⏱ clock</span>
+        {% elif t.transaction_type == 'manual' %}
+          <span class="badge" style="background:rgba(250,166,26,.2);color:#faa61a;">✋ manual</span>
+        {% else %}
+          <span class="badge bg-secondary">{{ t.transaction_type }}</span>
+        {% endif %}
+      </td>
+      <td class="text-muted small">{{ (t.note or '')[:60] }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="text-center py-5 text-muted">
+  <i class="bi bi-coin" style="font-size:2rem;"></i>
+  <p class="mt-2">Brak transakcji.</p>
+</div>
+{% endif %}
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Live filter for action logs
+const filterType = document.getElementById('filterType');
+const filterUser = document.getElementById('filterUser');
+const logsList  = document.getElementById('actionLogsList');
+
+function applyFilter() {
+  if (!logsList) return;
+  const type = filterType ? filterType.value.toLowerCase() : '';
+  const user = filterUser ? filterUser.value.toLowerCase() : '';
+  logsList.querySelectorAll('.log-entry').forEach(el => {
+    const matchType = !type || (el.dataset.type || '').toLowerCase().includes(type);
+    const matchUser = !user || (el.dataset.user || '').toLowerCase().includes(user);
+    el.style.display = (matchType && matchUser) ? '' : 'none';
+  });
+}
+
+if (filterType) filterType.addEventListener('change', applyFilter);
+if (filterUser) filterUser.addEventListener('input', applyFilter);
+</script>
+{% endblock %}

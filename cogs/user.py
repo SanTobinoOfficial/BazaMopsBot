@@ -1,14 +1,14 @@
 import discord
 from discord.ext import commands
 from datetime import datetime
+import json
 import database as db
 
 BLURPLE = 0x7289DA
 GREEN   = 0x43B581
 RED     = 0xF04747
 YELLOW  = 0xFAA61A
-
-MEDALS = ['🥇', '🥈', '🥉']
+MEDALS  = ['🥇', '🥈', '🥉']
 
 
 class UserCog(commands.Cog):
@@ -25,12 +25,26 @@ class UserCog(commands.Cog):
             'help':        self._cmd_help,
         }
 
-    def _resolve_member(self, msg: discord.Message, arg: str) -> discord.Member | None:
+    def _resolve_member(self, msg, arg):
         uid = arg.strip('<@!>').strip()
         try:
             return msg.guild.get_member(int(uid))
         except ValueError:
             return None
+
+    async def _can_use(self, member: discord.Member, guild_id: int,
+                       command_name: str) -> bool:
+        """Check command-level permissions for user commands."""
+        perm = db.get_command_permission(guild_id, command_name)
+        if perm:
+            try:
+                allowed = json.loads(perm['allowed_role_ids'])
+            except Exception:
+                allowed = []
+            if allowed:
+                return (member.guild_permissions.administrator or
+                        any(r.id in allowed for r in member.roles))
+        return True   # User commands open by default
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -47,309 +61,235 @@ class UserCog(commands.Cog):
         db.ensure_guild(message.guild.id)
         db.ensure_user(message.author.id, message.guild.id,
                        str(message.author), message.author.display_name)
+        if not await self._can_use(message.author, message.guild.id, cmd):
+            await message.reply(
+                embed=discord.Embed(
+                    description='❌ Twoja rola nie ma dostępu do tej komendy.',
+                    color=RED),
+                mention_author=False)
+            return
         await self._handlers[cmd](message, parts[1:])
 
-    # ── .points [@user] ───────────────────────────────────────────────────────
-    async def _cmd_points(self, msg: discord.Message, args: list):
-        if args:
-            member = self._resolve_member(msg, args[0])
-        else:
-            member = msg.author
-        if not member:
-            await msg.reply(embed=discord.Embed(description='❌ Nie znaleziono użytkownika.', color=RED),
-                            mention_author=False)
-            return
-
-        db.ensure_user(member.id, msg.guild.id, str(member), member.display_name)
-        user = db.get_user(member.id, msg.guild.id)
-        rank = db.get_user_auto_rank(member.id, msg.guild.id)
-
-        # Find next rank
+    async def _cmd_points(self, msg, args):
+        m = self._resolve_member(msg, args[0]) if args else msg.author
+        if not m:
+            await msg.reply(embed=discord.Embed(description='❌ Nie znaleziono.', color=RED),
+                            mention_author=False); return
+        db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
+        u = db.get_user(m.id, msg.guild.id)
+        rank = db.get_user_auto_rank(m.id, msg.guild.id)
         ranks = db.get_ranks(msg.guild.id, auto_only=True)
-        next_rank = None
-        for r in ranks:
-            if r['required_points'] > user['points']:
-                next_rank = r
-                break
-
-        embed = discord.Embed(
-            title=f'💰 Punkty – {member.display_name}',
-            color=BLURPLE
-        )
-        embed.set_thumbnail(url=member.display_avatar.url)
-        embed.add_field(name='Punkty', value=f'**{user["points"]:.1f}** pkt', inline=True)
-        embed.add_field(name='Godziny', value=f'**{user["total_hours"]:.1f}h**', inline=True)
-        embed.add_field(name='Sesje', value=f'**{user["sessions_count"]}**', inline=True)
-
+        next_r = next((r for r in ranks if r['required_points'] > u['points']), None)
+        e = discord.Embed(title=f'💰 Punkty – {m.display_name}', color=BLURPLE)
+        e.set_thumbnail(url=m.display_avatar.url)
+        e.add_field(name='Punkty', value=f'**{u["points"]:.1f}** pkt', inline=True)
+        e.add_field(name='Godziny', value=f'**{u["total_hours"]:.1f}h**', inline=True)
+        e.add_field(name='Sesje', value=f'**{u["sessions_count"]}**', inline=True)
         if rank:
-            embed.add_field(name='Obecna ranga', value=f'{rank["icon"]} {rank["name"]}', inline=False)
-        if next_rank:
-            needed = next_rank['required_points'] - user['points']
-            embed.add_field(name='Następna ranga',
-                            value=f'{next_rank["icon"]} {next_rank["name"]} – brakuje **{needed:.1f} pkt**',
-                            inline=False)
-        await msg.reply(embed=embed, mention_author=False)
+            e.add_field(name='Obecna ranga', value=f'{rank["icon"]} {rank["name"]}', inline=False)
+        if next_r:
+            e.add_field(name='Następna ranga',
+                        value=f'{next_r["icon"]} {next_r["name"]} – brakuje **{next_r["required_points"]-u["points"]:.1f} pkt**',
+                        inline=False)
+        warns = db.get_warning_count(m.id, msg.guild.id)
+        cfg = db.get_guild(msg.guild.id) or {}
+        if warns > 0:
+            e.set_footer(text=f'⚠️ Ostrzeżenia: {warns}/{cfg.get("warn_limit", 3)}')
+        await msg.reply(embed=e, mention_author=False)
 
-    # ── .rank [@user] ─────────────────────────────────────────────────────────
-    async def _cmd_rank(self, msg: discord.Message, args: list):
-        if args:
-            member = self._resolve_member(msg, args[0])
-        else:
-            member = msg.author
-        if not member:
-            await msg.reply(embed=discord.Embed(description='❌ Nie znaleziono użytkownika.', color=RED),
-                            mention_author=False)
-            return
-
-        db.ensure_user(member.id, msg.guild.id, str(member), member.display_name)
-        user = db.get_user(member.id, msg.guild.id)
-        auto_rank = db.get_user_auto_rank(member.id, msg.guild.id)
-        specials  = db.get_user_special_ranks(member.id, msg.guild.id)
-
-        embed = discord.Embed(title=f'⭐ Ranga – {member.display_name}', color=BLURPLE)
-        embed.set_thumbnail(url=member.display_avatar.url)
-        embed.add_field(name='💰 Punkty', value=f'{user["points"]:.1f}', inline=True)
-
-        if auto_rank:
+    async def _cmd_rank(self, msg, args):
+        m = self._resolve_member(msg, args[0]) if args else msg.author
+        if not m:
+            await msg.reply(embed=discord.Embed(description='❌ Nie znaleziono.', color=RED),
+                            mention_author=False); return
+        db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
+        u = db.get_user(m.id, msg.guild.id)
+        auto = db.get_user_auto_rank(m.id, msg.guild.id)
+        specials = db.get_user_special_ranks(m.id, msg.guild.id)
+        units = [r for r in specials if r.get('is_owner_only')]
+        normals = [r for r in specials if not r.get('is_owner_only')]
+        color = BLURPLE
+        if auto and auto.get('color'):
             try:
-                color = int(auto_rank['color'].lstrip('#'), 16)
-                embed.color = color
+                color = int(auto['color'].lstrip('#'), 16)
             except Exception:
                 pass
-            embed.add_field(
-                name='🤖 Ranga automatyczna',
-                value=f'{auto_rank["icon"]} **{auto_rank["name"]}**\n'
-                      f'Wymagane: {auto_rank["required_points"]:.0f} pkt',
-                inline=False
-            )
-        else:
-            embed.add_field(name='🤖 Ranga automatyczna', value='Brak (brak rang lub za mało pkt)', inline=False)
+        e = discord.Embed(title=f'⭐ Ranga – {m.display_name}', color=color)
+        e.set_thumbnail(url=m.display_avatar.url)
+        e.add_field(name='💰 Punkty', value=f'{u["points"]:.1f}', inline=True)
+        e.add_field(name='🤖 Ranga automatyczna',
+                    value=f'{auto["icon"]} **{auto["name"]}** ({auto["required_points"]:.0f} pkt)' if auto else 'Brak',
+                    inline=False)
+        if units:
+            e.add_field(name='👑 Jednostki',
+                        value='\n'.join(f'{r["icon"]} **{r["name"]}**' + (f' – {r["note"]}' if r.get("note") else '') for r in units),
+                        inline=False)
+        if normals:
+            e.add_field(name='🎖️ Rangi specjalne',
+                        value='\n'.join(f'{r["icon"]} **{r["name"]}**' + (f' – {r["note"]}' if r.get("note") else '') for r in normals),
+                        inline=False)
+        await msg.reply(embed=e, mention_author=False)
 
-        if specials:
-            embed.add_field(
-                name='🎖️ Rangi specjalne',
-                value='\n'.join(
-                    f'{r["icon"]} **{r["name"]}**' + (f' – {r["note"]}' if r.get("note") else '')
-                    for r in specials
-                ),
-                inline=False
-            )
-        await msg.reply(embed=embed, mention_author=False)
-
-    # ── .lb / .leaderboard ────────────────────────────────────────────────────
-    async def _cmd_leaderboard(self, msg: discord.Message, args: list):
+    async def _cmd_leaderboard(self, msg, args):
         top = db.get_leaderboard(msg.guild.id, limit=10)
         if not top:
-            await msg.reply(embed=discord.Embed(description='📭 Brak danych rankingowych.', color=YELLOW),
-                            mention_author=False)
-            return
-
-        embed = discord.Embed(title='🏆 Ranking Aktywności', color=BLURPLE, timestamp=datetime.now())
+            await msg.reply(embed=discord.Embed(description='📭 Brak danych.', color=YELLOW),
+                            mention_author=False); return
+        e = discord.Embed(title='🏆 Ranking Aktywności', color=BLURPLE, timestamp=datetime.now())
         lines = []
         for i, u in enumerate(top):
             medal = MEDALS[i] if i < 3 else f'`{i+1}.`'
             member = msg.guild.get_member(u['user_id'])
-            name = member.display_name if member else u.get('display_name') or u.get('username') or f'ID:{u["user_id"]}'
+            name = member.display_name if member else u.get('display_name') or str(u['user_id'])
             rank = db.get_user_auto_rank(u['user_id'], msg.guild.id)
-            rank_str = f' • {rank["icon"]} {rank["name"]}' if rank else ''
-            lines.append(f'{medal} **{name}** – {u["points"]:.1f} pkt{rank_str}')
-
-        embed.description = '\n'.join(lines)
-
-        # Show calling user's position
-        user = db.get_user(msg.author.id, msg.guild.id)
-        if user and not user['is_banned']:
-            all_users = db.get_leaderboard(msg.guild.id, limit=9999)
-            pos = next((i+1 for i, u in enumerate(all_users) if u['user_id'] == msg.author.id), None)
+            rs = f' • {rank["icon"]} {rank["name"]}' if rank else ''
+            lines.append(f'{medal} **{name}** – {u["points"]:.1f} pkt{rs}')
+        e.description = '\n'.join(lines)
+        all_u = db.get_leaderboard(msg.guild.id, limit=9999)
+        me = db.get_user(msg.author.id, msg.guild.id)
+        if me and not me['is_banned']:
+            pos = next((i+1 for i, u in enumerate(all_u) if u['user_id'] == msg.author.id), None)
             if pos and pos > 10:
-                embed.set_footer(text=f'Twoja pozycja: #{pos} | {user["points"]:.1f} pkt')
+                e.set_footer(text=f'Twoja pozycja: #{pos} | {me["points"]:.1f} pkt')
+        await msg.reply(embed=e, mention_author=False)
 
-        await msg.reply(embed=embed, mention_author=False)
-
-    # ── .history ──────────────────────────────────────────────────────────────
-    async def _cmd_history(self, msg: discord.Message, args: list):
+    async def _cmd_history(self, msg, args):
         sessions = db.get_user_sessions(msg.author.id, msg.guild.id, limit=10)
         if not sessions:
-            await msg.reply(embed=discord.Embed(description='📭 Brak historii sesji.', color=YELLOW),
-                            mention_author=False)
-            return
-
-        embed = discord.Embed(title='📅 Historia Sesji', color=BLURPLE)
+            await msg.reply(embed=discord.Embed(description='📭 Brak historii.', color=YELLOW),
+                            mention_author=False); return
+        e = discord.Embed(title='📅 Historia Sesji', color=BLURPLE)
         lines = []
         for s in sessions:
             ci = datetime.fromisoformat(s['clock_in_time']).strftime('%d.%m %H:%M')
+            flag = ' ⚠️' if s.get('flagged') else ''
             if s['clock_out_time']:
                 co = datetime.fromisoformat(s['clock_out_time']).strftime('%H:%M')
-                lines.append(f'`{ci}` → `{co}` | {s["hours_worked"]:.2f}h | +{s["points_earned"]:.1f} pkt')
+                lines.append(f'`{ci}` → `{co}` | {s["hours_worked"]:.2f}h | +{s["points_earned"]:.1f} pkt{flag}')
             else:
                 lines.append(f'`{ci}` → 🟢 *aktywna*')
+        e.description = '\n'.join(lines)
+        u = db.get_user(msg.author.id, msg.guild.id)
+        if u:
+            e.set_footer(text=f'Łącznie: {u["total_hours"]:.1f}h | {u["points"]:.1f} pkt')
+        await msg.reply(embed=e, mention_author=False)
 
-        embed.description = '\n'.join(lines)
-        user = db.get_user(msg.author.id, msg.guild.id)
-        if user:
-            embed.set_footer(text=f'Łącznie: {user["total_hours"]:.1f}h | {user["points"]:.1f} pkt')
-        await msg.reply(embed=embed, mention_author=False)
-
-    # ── .profile [@user] ──────────────────────────────────────────────────────
-    async def _cmd_profile(self, msg: discord.Message, args: list):
-        if args:
-            member = self._resolve_member(msg, args[0])
-        else:
-            member = msg.author
-        if not member:
-            await msg.reply(embed=discord.Embed(description='❌ Nie znaleziono użytkownika.', color=RED),
-                            mention_author=False)
-            return
-
-        db.ensure_user(member.id, msg.guild.id, str(member), member.display_name)
-        user = db.get_user(member.id, msg.guild.id)
-        auto_rank = db.get_user_auto_rank(member.id, msg.guild.id)
-        specials  = db.get_user_special_ranks(member.id, msg.guild.id)
-        sessions  = db.get_user_sessions(member.id, msg.guild.id, limit=3)
-        txs       = db.get_user_transactions(member.id, msg.guild.id, limit=3)
-
-        # Rank color
+    async def _cmd_profile(self, msg, args):
+        m = self._resolve_member(msg, args[0]) if args else msg.author
+        if not m:
+            await msg.reply(embed=discord.Embed(description='❌ Nie znaleziono.', color=RED),
+                            mention_author=False); return
+        db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
+        u = db.get_user(m.id, msg.guild.id)
+        auto = db.get_user_auto_rank(m.id, msg.guild.id)
+        specials = db.get_user_special_ranks(m.id, msg.guild.id)
+        sessions = db.get_user_sessions(m.id, msg.guild.id, limit=3)
+        warns = db.get_warnings(m.id, msg.guild.id)
+        cfg = db.get_guild(msg.guild.id) or {}
         color = BLURPLE
-        if auto_rank and auto_rank.get('color'):
+        if auto and auto.get('color'):
             try:
-                color = int(auto_rank['color'].lstrip('#'), 16)
+                color = int(auto['color'].lstrip('#'), 16)
             except Exception:
                 pass
-
-        embed = discord.Embed(
-            title=f'👤 Profil – {member.display_name}',
-            color=color,
-            timestamp=datetime.now()
-        )
-        embed.set_thumbnail(url=member.display_avatar.url)
-
-        # Stats
-        embed.add_field(name='💰 Punkty', value=f'{user["points"]:.1f}', inline=True)
-        embed.add_field(name='⏱️ Łączny czas', value=f'{user["total_hours"]:.1f}h', inline=True)
-        embed.add_field(name='📅 Sesje', value=str(user['sessions_count']), inline=True)
-
-        # Ranks
+        e = discord.Embed(title=f'👤 Profil – {m.display_name}', color=color, timestamp=datetime.now())
+        e.set_thumbnail(url=m.display_avatar.url)
+        e.add_field(name='💰 Punkty', value=f'{u["points"]:.1f}', inline=True)
+        e.add_field(name='⏱️ Godziny', value=f'{u["total_hours"]:.1f}h', inline=True)
+        e.add_field(name='📅 Sesje', value=str(u['sessions_count']), inline=True)
         rank_lines = []
-        if auto_rank:
-            rank_lines.append(f'🤖 {auto_rank["icon"]} {auto_rank["name"]}')
+        if auto:
+            rank_lines.append(f'🤖 {auto["icon"]} {auto["name"]}')
         for sr in specials:
-            rank_lines.append(f'🎖️ {sr["icon"]} {sr["name"]}')
-        embed.add_field(name='⭐ Rangi', value='\n'.join(rank_lines) or 'Brak', inline=False)
-
-        # Status
-        status = '🟢 Zalogowany' if user['is_clocked_in'] else '⚫ Niezalogowany'
-        if user['is_banned']:
-            status += ' | ⚠️ Zablokowany na lb'
-        embed.add_field(name='Status', value=status, inline=False)
-
-        # Recent sessions
+            badge = '👑' if sr.get('is_owner_only') else '🎖️'
+            rank_lines.append(f'{badge} {sr["icon"]} {sr["name"]}')
+        e.add_field(name='⭐ Rangi', value='\n'.join(rank_lines) or 'Brak', inline=False)
+        status = '🟢 Zalogowany' if u['is_clocked_in'] else '⚫ Niezalogowany'
+        if u['is_banned']:
+            status += ' | 🔨 Zablokowany na lb'
+        if warns:
+            status += f' | ⚠️ {len(warns)}/{cfg.get("warn_limit", 3)} warnów'
+        e.add_field(name='Status', value=status, inline=False)
         if sessions:
-            sess_lines = []
+            lines = []
             for s in sessions:
                 ci = datetime.fromisoformat(s['clock_in_time']).strftime('%d.%m %H:%M')
                 if s['clock_out_time']:
                     co = datetime.fromisoformat(s['clock_out_time']).strftime('%H:%M')
-                    sess_lines.append(f'`{ci}→{co}` {s["hours_worked"]:.1f}h +{s["points_earned"]:.1f}pkt')
+                    lines.append(f'`{ci}→{co}` {s["hours_worked"]:.1f}h +{s["points_earned"]:.1f}pkt')
                 else:
-                    sess_lines.append(f'`{ci}` 🟢 aktywna')
-            embed.add_field(name='📅 Ostatnie sesje', value='\n'.join(sess_lines), inline=False)
-
-        # Next rank
+                    lines.append(f'`{ci}` 🟢 aktywna')
+            e.add_field(name='📅 Ostatnie sesje', value='\n'.join(lines), inline=False)
         ranks = db.get_ranks(msg.guild.id, auto_only=True)
         for r in ranks:
-            if r['required_points'] > user['points']:
-                needed = r['required_points'] - user['points']
-                embed.set_footer(text=f'Do rangi {r["name"]}: {needed:.1f} pkt')
+            if r['required_points'] > u['points']:
+                e.set_footer(text=f'Do rangi {r["name"]}: {r["required_points"]-u["points"]:.1f} pkt')
                 break
+        await msg.reply(embed=e, mention_author=False)
 
-        await msg.reply(embed=embed, mention_author=False)
-
-    # ── .clock ────────────────────────────────────────────────────────────────
-    async def _cmd_clock(self, msg: discord.Message, args: list):
-        user = db.get_user(msg.author.id, msg.guild.id)
-        if not user:
-            await msg.reply(embed=discord.Embed(description='Brak danych. Najpierw użyj Clock In.',
-                                                color=YELLOW), mention_author=False)
-            return
-        if user['is_clocked_in']:
-            since = datetime.fromisoformat(user['clock_in_time'])
+    async def _cmd_clock(self, msg, args):
+        u = db.get_user(msg.author.id, msg.guild.id)
+        if not u:
+            await msg.reply(embed=discord.Embed(description='Brak danych.', color=YELLOW),
+                            mention_author=False); return
+        if u['is_clocked_in']:
+            since = datetime.fromisoformat(u['clock_in_time'])
             elapsed = datetime.now() - since
             mins = int(elapsed.total_seconds() / 60)
             cfg = db.get_guild(msg.guild.id) or {}
-            pph = cfg.get('points_per_hour', 10.0)
-            est_pts = round((elapsed.total_seconds() / 3600) * pph, 1)
-            embed = discord.Embed(
-                description=f'🟢 Jesteś zalogowany od **{since.strftime("%H:%M")}**\n'
-                            f'Czas aktywności: **{mins} min**\n'
-                            f'Szacowane punkty: **~{est_pts} pkt**',
-                color=GREEN
-            )
+            est = round((elapsed.total_seconds() / 3600) * cfg.get('points_per_hour', 10), 1)
+            e = discord.Embed(
+                description=f'🟢 Zalogowany od **{since.strftime("%H:%M")}**\n'
+                            f'Czas: **{mins} min** | Szacowane: **~{est} pkt**',
+                color=GREEN)
         else:
-            embed = discord.Embed(description='⚫ Nie jesteś zalogowany.', color=YELLOW)
-        await msg.reply(embed=embed, mention_author=False)
+            e = discord.Embed(description='⚫ Nie jesteś zalogowany.', color=YELLOW)
+        await msg.reply(embed=e, mention_author=False)
 
-    # ── .help ─────────────────────────────────────────────────────────────────
-    async def _cmd_help(self, msg: discord.Message, args: list):
-        from cogs.admin import AdminCog
-        is_admin = False
+    async def _cmd_help(self, msg, args):
         cfg = db.get_guild(msg.guild.id) or {}
-        import json
         try:
-            role_ids = json.loads(cfg.get('admin_role_ids', '[]'))
+            admin_ids = json.loads(cfg.get('admin_role_ids') or '[]')
         except Exception:
-            role_ids = []
-        if (msg.author.guild_permissions.administrator or
-                any(r.id in role_ids for r in msg.author.roles)):
-            is_admin = True
-
-        embed = discord.Embed(
-            title='📖 Pomoc – System Rang',
-            description='Prefix komend: **`.`**',
-            color=BLURPLE
-        )
-        embed.add_field(
-            name='👤 Komendy użytkownika',
-            value=(
-                '`.points [@użytkownik]` – sprawdź punkty\n'
-                '`.rank [@użytkownik]` – sprawdź rangę\n'
-                '`.lb` / `.leaderboard` – ranking top 10\n'
-                '`.history` – historia sesji\n'
-                '`.profile [@użytkownik]` – pełny profil\n'
-                '`.clock` – status clock in/out\n'
-                '`.help` – ta wiadomość'
-            ),
-            inline=False
-        )
+            admin_ids = []
+        is_admin = (msg.author.guild_permissions.administrator or
+                    any(r.id in admin_ids for r in msg.author.roles))
+        e = discord.Embed(title='📖 Pomoc – System Rang',
+                          description='Prefix: **`.`** | Panel komend: kanał z przyciskami',
+                          color=BLURPLE)
+        e.add_field(name='👤 Użytkownik', inline=False, value=(
+            '`.points [@user]` – punkty\n'
+            '`.rank [@user]` – ranga (auto + specjalne + jednostki)\n'
+            '`.lb` – ranking top 10\n'
+            '`.history` – historia sesji\n'
+            '`.profile [@user]` – pełny profil\n'
+            '`.clock` – status zalogowania\n'
+            '`.help` – ta wiadomość'
+        ))
         if is_admin:
-            embed.add_field(
-                name='🔨 Komendy Admina',
-                value=(
-                    '`.ban @user` – zablokuj z rankingu\n'
-                    '`.unban @user` – odblokuj z rankingu\n'
-                    '`.addpoints @user <n> [nota]` – dodaj punkty\n'
-                    '`.removepoints @user <n> [nota]` – odejmij punkty\n'
-                    '`.setpoints @user <n> [nota]` – ustaw punkty\n'
-                    '`.giverank @user <nazwa> [nota]` – nadaj rangę spec.\n'
-                    '`.takerank @user <nazwa>` – odbierz rangę spec.\n'
-                    '`.createrank <nazwa> <pkt|SPECIAL> [ikona] [#kolor] [opis]`\n'
-                    '`.deleterank <nazwa>` – usuń rangę\n'
-                    '`.editrank <nazwa> <pole> <wartość>` – edytuj rangę\n'
-                    '`.ranks` – lista wszystkich rang\n'
-                    '`.forceclockout @user` – wymuś wylogowanie\n'
-                    '`.resetuser @user` – resetuj dane użytkownika\n'
-                    '`.userinfo @user` – szczegóły użytkownika\n'
-                    '`.serverstats` – statystyki serwera\n'
-                    '`.setchannel <clock|log> #kanał`\n'
-                    '`.setpoints_h <n>` – punkty za godzinę\n'
-                    '`.adminrole @rola` – dodaj rolę admina\n'
-                    '`.removeadminrole @rola` – usuń rolę admina\n'
-                    '`.config` – pokaż konfigurację\n'
-                    '`.apel` – wyślij codzienny apel ręcznie'
-                ),
-                inline=False
-            )
-        embed.set_footer(text='Dashboard: dostępny pod adresem bota na Replit')
-        await msg.reply(embed=embed, mention_author=False)
+            e.add_field(name='🔨 Admin – Punkty', inline=False, value=(
+                '`.addpoints @u <n> [nota]`  `.removepoints @u <n> [nota]`  `.setpoints @u <n> [nota]`'
+            ))
+            e.add_field(name='🔨 Admin – Rangi', inline=False, value=(
+                '`.giverank @u <ranga> [nota]` – nadaj SPECIAL/UNIT\n'
+                '`.takerank @u <ranga>` – odbierz rangę\n'
+                '`.createrank <n> <pkt|SPECIAL|UNIT> [ikona] [#kolor] [opis]`\n'
+                '`.deleterank <nazwa>`  `.editrank <nazwa> <pole> <wartość>`  `.ranks`'
+            ))
+            e.add_field(name='🔨 Admin – Ostrzeżenia', inline=False, value=(
+                '`.warn @u [powód]`  `.warnings [@u]`  `.clearwarn @u [id]`'
+            ))
+            e.add_field(name='🔨 Admin – Zarządzanie', inline=False, value=(
+                '`.userinfo @u`  `.forceclockout @u`  `.resetuser @u`\n'
+                '`.ban @u`  `.unban @u`  `.serverstats`\n'
+                '`.setchannel <clock|log|panel> #ch`  `.setpoints_h <n>`\n'
+                '`.adminrole @r`  `.removeadminrole @r`  `.setowner @u`\n'
+                '`.setwarnlimit <n>`  `.setmaxhours <h>`  `.config`  `.apel`'
+            ))
+            e.add_field(name='🔨 Admin – Panel', inline=False, value=(
+                '`.panel` – utwórz/odśwież panel komend w skonfigurowanym kanale'
+            ))
+        await msg.reply(embed=e, mention_author=False)
 
 
 async def setup(bot: commands.Bot):

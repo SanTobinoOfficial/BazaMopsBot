@@ -1,0 +1,291 @@
+{% extends 'base.html' %}
+{% block title %}Ogłoszenia – {{ guild_name }}{% endblock %}
+{% block extra_head %}
+<style>
+  .announcement-card {
+    background: rgba(255,255,255,.03);
+    border: 1px solid rgba(255,255,255,.07);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    transition: background .15s;
+  }
+  .announcement-card:hover { background: rgba(255,255,255,.05); }
+  .announcement-card.embed-type { border-left: 4px solid var(--discord-blue); }
+  .announcement-card.text-type  { border-left: 4px solid #43b581; }
+  #charCount { font-size: .75rem; }
+  #embedPreview {
+    background: #2f3136;
+    border-left: 4px solid #7289da;
+    border-radius: 4px;
+    padding: 12px 16px;
+    margin-top: 8px;
+  }
+  #embedPreview .embed-title { font-weight: 700; color: #fff; margin-bottom: 6px; }
+  #embedPreview .embed-desc  { color: #dcddde; font-size: .9rem; white-space: pre-wrap; }
+  #embedPreview .embed-footer { font-size: .75rem; color: #72767d; margin-top: 10px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h4 class="fw-bold mb-0"><i class="bi bi-megaphone me-2"></i>Ogłoszenia – {{ guild_name }}</h4>
+</div>
+
+<div class="row g-4">
+
+  <!-- Compose form -->
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header">
+        <i class="bi bi-pencil-square me-2"></i>Nowe ogłoszenie
+      </div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('guild_send_announcement', guild_id=guild_id) }}" id="announcementForm">
+
+          <!-- Channel -->
+          <div class="mb-3">
+            <label class="form-label text-muted small fw-semibold">Kanał docelowy <span class="text-danger">*</span></label>
+            <select name="channel_id" class="form-select bg-dark border-secondary text-white" required>
+              <option value="">— Wybierz kanał —</option>
+              {% for ch in text_channels %}
+              <option value="{{ ch.id }}">#{{ ch.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <!-- Type toggle -->
+          <div class="mb-3">
+            <label class="form-label text-muted small fw-semibold">Typ ogłoszenia</label>
+            <div class="d-flex gap-2">
+              <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="announce_type"
+                       id="typeEmbed" value="embed" checked>
+                <label class="form-check-label text-white" for="typeEmbed">
+                  <span class="badge" style="background:rgba(114,137,218,.3);color:#7289da;">Embed</span>
+                  <small class="text-muted ms-1">z formatowaniem</small>
+                </label>
+              </div>
+              <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="announce_type"
+                       id="typeText" value="text">
+                <label class="form-check-label text-white" for="typeText">
+                  <span class="badge bg-secondary">Tekst</span>
+                  <small class="text-muted ms-1">zwykła wiadomość</small>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Embed fields -->
+          <div id="embedFields">
+            <div class="mb-3">
+              <label class="form-label text-muted small fw-semibold">Tytuł embeda</label>
+              <input type="text" name="embed_title" id="embedTitleInput"
+                     class="form-control bg-dark border-secondary text-white"
+                     placeholder="np. 📢 Ważne ogłoszenie" maxlength="256">
+            </div>
+            <div class="mb-3">
+              <label class="form-label text-muted small fw-semibold">
+                Kolor embeda
+                <span class="badge ms-1 px-2" id="colorPreviewBadge" style="background:#7289da;">&nbsp;</span>
+              </label>
+              <div class="d-flex align-items-center gap-2">
+                <input type="color" name="embed_color" id="embedColorInput"
+                       class="form-control form-control-color bg-dark border-secondary"
+                       value="#7289da" style="width:50px;height:34px;">
+                <div class="d-flex gap-1 flex-wrap">
+                  {% for color in ['#7289da','#43b581','#f04747','#faa61a','#ffffff','#9b59b6','#e91e63'] %}
+                  <span class="d-inline-block rounded-circle"
+                        style="width:20px;height:20px;background:{{ color }};cursor:pointer;border:2px solid rgba(255,255,255,.2);"
+                        onclick="document.getElementById('embedColorInput').value='{{ color }}';updatePreview();"
+                        title="{{ color }}"></span>
+                  {% endfor %}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Embed footer / mention fields -->
+          <div id="embedExtraFields">
+            <div class="mb-3">
+              <label class="form-label text-muted small fw-semibold">Stopka embeda <span class="text-muted">(opcjonalna)</span></label>
+              <input type="text" name="embed_footer"
+                     class="form-control bg-dark border-secondary text-white"
+                     placeholder="np. BazaMops Bot • {{ guild_name }}" maxlength="2048">
+            </div>
+          </div>
+
+          <!-- Content -->
+          <div class="mb-3">
+            <label class="form-label text-muted small fw-semibold">
+              Treść <span class="text-danger">*</span>
+              <span id="charCount" class="text-muted ms-2">0 / 2000</span>
+            </label>
+            <textarea name="content" id="contentArea"
+                      class="form-control bg-dark border-secondary text-white"
+                      rows="6" required maxlength="2000"
+                      placeholder="Wpisz treść ogłoszenia... Możesz używać Markdown: **bold**, *italic*, `code`"></textarea>
+          </div>
+
+          <!-- Mention role -->
+          <div class="mb-3">
+            <label class="form-label text-muted small fw-semibold">Ping roli <span class="text-muted">(opcjonalny)</span></label>
+            <select name="mention_role_id" class="form-select bg-dark border-secondary text-white">
+              <option value="">— Bez pinga —</option>
+              {% for role in guild_roles %}
+              {% if role.name != '@everyone' %}
+              <option value="{{ role.id }}">@{{ role.name }}</option>
+              {% endif %}
+              {% endfor %}
+              <option value="@everyone">@everyone</option>
+              <option value="@here">@here</option>
+            </select>
+          </div>
+
+          <!-- Embed live preview -->
+          <div id="previewContainer" class="mb-3">
+            <label class="form-label text-muted small fw-semibold">Podgląd embeda</label>
+            <div id="embedPreview">
+              <div class="embed-title" id="previewTitle">Tytuł ogłoszenia</div>
+              <div class="embed-desc" id="previewDesc">Treść pojawi się tutaj...</div>
+              <div class="embed-footer" id="previewFooter"></div>
+            </div>
+          </div>
+
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-discord" id="sendBtn">
+              <i class="bi bi-send me-1"></i>Wyślij ogłoszenie
+            </button>
+            <button type="button" class="btn btn-outline-secondary" onclick="clearForm()">
+              <i class="bi bi-x-circle me-1"></i>Wyczyść
+            </button>
+          </div>
+
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- History -->
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-clock-history me-2"></i>Historia ogłoszeń</span>
+        <span class="badge bg-secondary">{{ announcements | length }}</span>
+      </div>
+      <div class="card-body p-2" style="max-height:600px;overflow-y:auto;">
+        {% if announcements %}
+          {% for ann in announcements %}
+          <div class="announcement-card {{ 'embed-type' if ann.announce_type == 'embed' else 'text-type' }}">
+            <div class="d-flex justify-content-between align-items-start mb-1">
+              <div>
+                {% if ann.announce_type == 'embed' %}
+                <span class="badge" style="background:rgba(114,137,218,.3);color:#7289da;font-size:.65rem;">EMBED</span>
+                {% else %}
+                <span class="badge bg-secondary" style="font-size:.65rem;">TEXT</span>
+                {% endif %}
+                {% if ann.channel_name %}
+                <span class="text-muted small ms-1">#{{ ann.channel_name }}</span>
+                {% elif ann.channel_id %}
+                <span class="text-muted small ms-1">#{{ ann.channel_id }}</span>
+                {% endif %}
+              </div>
+              <span class="text-muted" style="font-size:.72rem;">{{ ann.created_at[:16] | replace('T',' ') }}</span>
+            </div>
+            {% if ann.embed_title %}
+            <div class="fw-semibold text-white small mb-1">{{ ann.embed_title }}</div>
+            {% endif %}
+            <div class="text-muted small" style="white-space:pre-wrap;">{{ (ann.content or '')[:200] }}{% if (ann.content or '') | length > 200 %}…{% endif %}</div>
+          </div>
+          {% endfor %}
+        {% else %}
+        <div class="text-center py-4 text-muted">
+          <i class="bi bi-megaphone" style="font-size:2rem;opacity:.3;"></i>
+          <p class="mt-2 small">Brak wysłanych ogłoszeń.</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const contentArea    = document.getElementById('contentArea');
+const charCount      = document.getElementById('charCount');
+const embedFields    = document.getElementById('embedFields');
+const embedExtraFields = document.getElementById('embedExtraFields');
+const previewContainer = document.getElementById('previewContainer');
+const previewTitle   = document.getElementById('previewTitle');
+const previewDesc    = document.getElementById('previewDesc');
+const previewFooter  = document.getElementById('previewFooter');
+const embedPreview   = document.getElementById('embedPreview');
+const embedColorInput= document.getElementById('embedColorInput');
+const embedTitleInput= document.getElementById('embedTitleInput');
+const colorPreviewBadge = document.getElementById('colorPreviewBadge');
+
+function updatePreview() {
+  const color = embedColorInput ? embedColorInput.value : '#7289da';
+  if (embedPreview) embedPreview.style.borderLeftColor = color;
+  if (colorPreviewBadge) colorPreviewBadge.style.background = color;
+  if (previewTitle && embedTitleInput) {
+    previewTitle.textContent = embedTitleInput.value || 'Tytuł ogłoszenia';
+  }
+  if (previewDesc && contentArea) {
+    previewDesc.textContent = contentArea.value || 'Treść pojawi się tutaj...';
+  }
+  const footerInput = document.querySelector('input[name="embed_footer"]');
+  if (previewFooter && footerInput) {
+    previewFooter.textContent = footerInput.value || '';
+    previewFooter.style.display = footerInput.value ? '' : 'none';
+  }
+}
+
+// Char counter
+if (contentArea) {
+  contentArea.addEventListener('input', () => {
+    charCount.textContent = `${contentArea.value.length} / 2000`;
+    updatePreview();
+  });
+}
+
+if (embedTitleInput) embedTitleInput.addEventListener('input', updatePreview);
+if (embedColorInput) embedColorInput.addEventListener('input', updatePreview);
+const footerInputEl = document.querySelector('input[name="embed_footer"]');
+if (footerInputEl) footerInputEl.addEventListener('input', updatePreview);
+
+// Type toggle
+document.querySelectorAll('input[name="announce_type"]').forEach(radio => {
+  radio.addEventListener('change', () => {
+    const isEmbed = radio.value === 'embed';
+    if (embedFields) embedFields.style.display = isEmbed ? '' : 'none';
+    if (embedExtraFields) embedExtraFields.style.display = isEmbed ? '' : 'none';
+    if (previewContainer) previewContainer.style.display = isEmbed ? '' : 'none';
+  });
+});
+
+// Confirm before send
+document.getElementById('announcementForm').addEventListener('submit', e => {
+  const ch = document.querySelector('select[name="channel_id"]').value;
+  const txt = contentArea.value.trim();
+  if (!ch || !txt) return;
+  if (!confirm('Czy na pewno chcesz wysłać to ogłoszenie na Discord?')) {
+    e.preventDefault();
+  }
+});
+
+function clearForm() {
+  if (confirm('Wyczyścić formularz?')) {
+    document.getElementById('announcementForm').reset();
+    charCount.textContent = '0 / 2000';
+    updatePreview();
+  }
+}
+
+// Init
+updatePreview();
+</script>
+{% endblock %}

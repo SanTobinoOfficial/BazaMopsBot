@@ -16,9 +16,13 @@ class BotMops(commands.Bot):
         await self.load_extension('cogs.clockin')
         await self.load_extension('cogs.admin')
         await self.load_extension('cogs.user')
-        # Re-register persistent views after restart
+        await self.load_extension('cogs.panel')
+        # Re-register ALL persistent views after restart
         from cogs.clockin import ClockView
+        from cogs.panel import UserPanelView, AdminPanelView
         self.add_view(ClockView())
+        self.add_view(UserPanelView())
+        self.add_view(AdminPanelView())
 
     async def on_ready(self):
         print(f'✅ Zalogowano jako {self.user} (ID: {self.user.id})')
@@ -34,12 +38,11 @@ class BotMops(commands.Bot):
 
     async def on_guild_join(self, guild: discord.Guild):
         db.ensure_guild(guild.id)
-        print(f'➕ Dołączono do serwera: {guild.name}')
+        print(f'➕ Dołączono do: {guild.name}')
 
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild:
             return
-        # Keep usernames up to date
         db.ensure_user(
             message.author.id, message.guild.id,
             str(message.author), message.author.display_name
@@ -47,7 +50,7 @@ class BotMops(commands.Bot):
         await self.process_commands(message)
 
     async def on_command_error(self, ctx, error):
-        pass  # We handle commands manually
+        pass
 
 
 bot = BotMops()

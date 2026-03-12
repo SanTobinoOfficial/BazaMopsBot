@@ -1,0 +1,143 @@
+{% extends 'base.html' %}
+{% block title %}Uprawnienia komend – {{ guild_name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h4 class="fw-bold mb-0"><i class="bi bi-key me-2"></i>Uprawnienia komend – {{ guild_name }}</h4>
+</div>
+
+<div class="alert alert-secondary mb-4" style="background:rgba(114,137,218,.1);border-color:rgba(114,137,218,.3);">
+  <i class="bi bi-info-circle me-2"></i>
+  <strong>Jak to działa:</strong> Dla każdej komendy możesz wybrać role, które mogą jej używać.
+  Jeśli żadna rola nie jest zaznaczona, komenda używa domyślnych uprawnień
+  (komendy admina → role admina; komendy użytkownika → wszyscy).
+  Użytkownicy z uprawnieniem <strong>Zarządzaj serwerem</strong> zawsze mają dostęp do komend admina.
+</div>
+
+<form method="POST" action="{{ url_for('guild_permissions', guild_id=guild_id) }}">
+<div class="row g-4">
+
+  {% for category, commands in command_list.items() %}
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex align-items-center gap-2">
+        {% if category == 'admin' %}
+          <i class="bi bi-shield-fill text-warning"></i>
+          <span>Komendy administratora</span>
+          <span class="badge bg-warning text-dark ms-1">Admin</span>
+        {% elif category == 'user' %}
+          <i class="bi bi-person-fill" style="color:var(--discord-blue)"></i>
+          <span>Komendy użytkownika</span>
+          <span class="badge ms-1" style="background:rgba(114,137,218,.3);color:var(--discord-blue)">Użytkownik</span>
+        {% elif category == 'panel' %}
+          <i class="bi bi-layout-text-window-reverse text-info"></i>
+          <span>Komendy panelu</span>
+          <span class="badge bg-info text-dark ms-1">Panel</span>
+        {% else %}
+          <i class="bi bi-terminal"></i>
+          <span>{{ category | capitalize }}</span>
+        {% endif %}
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="width:180px">Komenda</th>
+                <th>Opis</th>
+                <th style="min-width:350px">Role (puste = domyślne)</th>
+              </tr>
+            </thead>
+            <tbody>
+            {% for cmd_name, cmd_desc in commands.items() %}
+            {% set perm = permissions.get(cmd_name, {}) %}
+            <tr>
+              <td>
+                <code class="text-warning">.{{ cmd_name }}</code>
+              </td>
+              <td class="text-muted small">{{ cmd_desc }}</td>
+              <td>
+                <div class="d-flex flex-wrap gap-1">
+                  {% for role in guild_roles %}
+                  {% if role.name != '@everyone' %}
+                  {% set role_id_str = role.id | string %}
+                  {% set allowed = perm.get('role_ids', []) %}
+                  <div class="form-check form-check-inline mb-0">
+                    <input class="form-check-input" type="checkbox"
+                           name="perm_{{ cmd_name }}"
+                           value="{{ role.id }}"
+                           id="perm_{{ cmd_name }}_{{ role.id }}"
+                           {% if role_id_str in allowed or role.id in allowed %}checked{% endif %}>
+                    <label class="form-check-label small" for="perm_{{ cmd_name }}_{{ role.id }}"
+                           style="color:#b9bbbe">
+                      {{ role.name }}
+                    </label>
+                  </div>
+                  {% endif %}
+                  {% endfor %}
+                </div>
+                {% if not guild_roles or guild_roles | selectattr('name', 'ne', '@everyone') | list | length == 0 %}
+                <small class="text-muted fst-italic">Brak ról na serwerze</small>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  <div class="col-12 d-flex gap-2">
+    <button type="submit" class="btn btn-discord">
+      <i class="bi bi-save me-1"></i>Zapisz uprawnienia
+    </button>
+    <button type="button" class="btn btn-outline-danger"
+            onclick="if(confirm('Czy na pewno chcesz zresetować WSZYSTKIE uprawnienia do domyślnych?')) { document.getElementById('reset-form').submit(); }">
+      <i class="bi bi-arrow-counterclockwise me-1"></i>Reset do domyślnych
+    </button>
+  </div>
+
+</div>
+</form>
+
+<form id="reset-form" method="POST"
+      action="{{ url_for('guild_permissions', guild_id=guild_id) }}?reset=1" style="display:none;"></form>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Szybkie zaznaczanie wszystkich ról dla komendy
+document.querySelectorAll('tr').forEach(row => {
+  const checkboxes = row.querySelectorAll('input[type=checkbox]');
+  if (checkboxes.length === 0) return;
+  const td = row.querySelector('td:last-child');
+  if (!td) return;
+
+  // "Zaznacz wszystkie" button
+  const btnAll = document.createElement('button');
+  btnAll.type = 'button';
+  btnAll.className = 'btn btn-xs btn-outline-secondary ms-2';
+  btnAll.style.fontSize = '.65rem';
+  btnAll.style.padding = '1px 6px';
+  btnAll.innerHTML = 'Wszystkie';
+  btnAll.onclick = () => checkboxes.forEach(c => c.checked = true);
+
+  const btnNone = document.createElement('button');
+  btnNone.type = 'button';
+  btnNone.className = 'btn btn-xs btn-outline-secondary ms-1';
+  btnNone.style.fontSize = '.65rem';
+  btnNone.style.padding = '1px 6px';
+  btnNone.innerHTML = 'Żadna';
+  btnNone.onclick = () => checkboxes.forEach(c => c.checked = false);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'mt-1';
+  wrap.appendChild(btnAll);
+  wrap.appendChild(btnNone);
+  td.appendChild(wrap);
+});
+</script>
+{% endblock %}
