@@ -48,13 +48,13 @@
               </tr>
             </thead>
             <tbody>
-            {% for cmd_name, cmd_desc in commands.items() %}
+            {% for cmd_name in commands %}
             {% set perm = permissions.get(cmd_name, {}) %}
             <tr>
               <td>
                 <code class="text-warning">.{{ cmd_name }}</code>
               </td>
-              <td class="text-muted small">{{ cmd_desc }}</td>
+              <td class="text-muted small">{{ cmd_name }}</td>
               <td>
                 <div class="d-flex flex-wrap gap-1">
                   {% for role in guild_roles %}
