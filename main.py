@@ -29,8 +29,21 @@ async def run_bot():
         # Keep the coroutine alive so the dashboard thread keeps running
         while True:
             await asyncio.sleep(3600)
+    
     print('🤖 Bot startuje...')
-    await bot.start(token)
+    try:
+        await bot.start(token)
+    except Exception as e:
+        print(f'❌ Błąd uruchamiania bota: {e}')
+        print('💡 Aby naprawić:')
+        print('1. Wejdź na: https://discord.com/developers/applications')
+        print('2. Kliknij swoją aplikację → Bot → Scroll do "Privileged Gateway Intents"')
+        print('3. Włącz: Message Content Intent, Server Members Intent, Presence Intent')
+        print('4. Kliknij Save Changes')
+        print('⏳ Dashboard jest aktywny – spróbuj ponownie po włączeniu uprawnień.')
+        # Keep running the dashboard
+        while True:
+            await asyncio.sleep(3600)
 
 
 def main():
