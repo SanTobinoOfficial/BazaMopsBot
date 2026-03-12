@@ -25,7 +25,10 @@ async def run_bot():
     from discord_bot import bot
     token = os.environ.get('DISCORD_TOKEN')
     if not token:
-        raise ValueError('❌ Brak DISCORD_TOKEN w zmiennych środowiskowych!')
+        print('⚠️  Brak DISCORD_TOKEN – bot Discord nie wystartuje. Tylko dashboard będzie aktywny.')
+        # Keep the coroutine alive so the dashboard thread keeps running
+        while True:
+            await asyncio.sleep(3600)
     print('🤖 Bot startuje...')
     await bot.start(token)
 
