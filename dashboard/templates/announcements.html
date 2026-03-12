@@ -41,7 +41,7 @@
         <i class="bi bi-pencil-square me-2"></i>Nowe ogłoszenie
       </div>
       <div class="card-body">
-        <form method="POST" action="{{ url_for('guild_send_announcement', guild_id=guild_id) }}" id="announcementForm">
+        <form method="POST" action="{{ url_for('send_announcement', guild_id=guild_id) }}" id="announcementForm">
 
           <!-- Channel -->
           <div class="mb-3">
