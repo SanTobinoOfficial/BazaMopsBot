@@ -18,10 +18,14 @@ class BotMops(commands.Bot):
         await self.load_extension('cogs.user')
         await self.load_extension('cogs.panel')
         # Re-register ALL persistent views after restart
-        from cogs.clockin import ClockView
-        from cogs.panel import UserPanelView, AdminPanelView
-        self.add_view(ClockView())
-        self.add_view(UserPanelView())
+        from cogs.clockin import ClockView, SessionClockView
+        from cogs.panel import (StatsPanelView, ActivityPanelView,
+                                ServerPanelView, AdminPanelView)
+        self.add_view(ClockView())          # backward compat for old embeds
+        self.add_view(SessionClockView())   # new session embeds
+        self.add_view(StatsPanelView())
+        self.add_view(ActivityPanelView())
+        self.add_view(ServerPanelView())
         self.add_view(AdminPanelView())
 
     async def on_ready(self):

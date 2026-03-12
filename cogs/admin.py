@@ -55,6 +55,13 @@ class AdminCog(commands.Cog):
             'setowner':        self._cmd_setowner,
             'setwarnlimit':    self._cmd_setwarnlimit,
             'setmaxhours':     self._cmd_setmaxhours,
+            # Factions
+            'createfaction':      self._cmd_createfaction,
+            'deletefaction':      self._cmd_deletefaction,
+            'editfaction':        self._cmd_editfaction,
+            'addfactionrole':     self._cmd_addfactionrole,
+            'removefactionrole':  self._cmd_removefactionrole,
+            'factions':           self._cmd_factions,
         }
 
     # ── Permission helpers ────────────────────────────────────────────────────
@@ -695,6 +702,134 @@ class AdminCog(commands.Cog):
                             mention_author=False)
         except ValueError:
             await msg.reply(embed=_err('Podaj liczbę godzin.'), mention_author=False)
+
+
+    # ── Factions ──────────────────────────────────────────────────────────────
+
+    async def _cmd_createfaction(self, msg, args):
+        """
+        .createfaction <nazwa> [ikona] [#kolor] [opis]
+        """
+        if not args:
+            await msg.reply(embed=_err(
+                '`.createfaction <nazwa> [ikona] [#kolor] [opis]`\n'
+                'Przykład: `.createfaction MR ⚔️ #ff5555 Frakcja MR`'
+            ), mention_author=False); return
+
+        name  = args[0]
+        icon  = args[1] if len(args) > 1 else '⚔️'
+        color = '#7289da'
+        desc  = ''
+        rest  = args[2:]
+        if rest and rest[0].startswith('#'):
+            color = rest[0]
+            desc  = ' '.join(rest[1:])
+        elif rest:
+            desc = ' '.join(rest)
+
+        if db.get_faction_by_name(msg.guild.id, name):
+            await msg.reply(embed=_err(f'Frakcja **{name}** już istnieje.'), mention_author=False); return
+
+        f = db.create_faction(msg.guild.id, name, icon=icon, color=color, description=desc)
+        if not f:
+            await msg.reply(embed=_err('Błąd tworzenia frakcji.'), mention_author=False); return
+        e = _ok(f'Utworzono frakcję **{icon} {name}**')
+        if desc:
+            e.add_field(name='Opis', value=desc)
+        e.add_field(name='Kolor', value=color)
+        e.set_footer(text='Dodaj role: .addfactionrole <frakcja> @rola')
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_deletefaction(self, msg, args):
+        if not args:
+            await msg.reply(embed=_err('`.deletefaction <nazwa>`'), mention_author=False); return
+        f = db.get_faction_by_name(msg.guild.id, ' '.join(args))
+        if not f:
+            await msg.reply(embed=_err('Nie znaleziono frakcji.'), mention_author=False); return
+        db.delete_faction(f['id'])
+        await msg.reply(embed=_ok(f'Usunięto frakcję **{f["icon"]} {f["name"]}**.'),
+                        mention_author=False)
+
+    async def _cmd_editfaction(self, msg, args):
+        """
+        .editfaction <nazwa> <pole> <wartość>
+        Pola: name, icon, color, description
+        """
+        if len(args) < 3:
+            await msg.reply(embed=_err(
+                '`.editfaction <nazwa> <pole> <wartość>`\n'
+                'Pola: `name`, `icon`, `color`, `description`'
+            ), mention_author=False); return
+        f = db.get_faction_by_name(msg.guild.id, args[0])
+        if not f:
+            await msg.reply(embed=_err('Nie znaleziono frakcji.'), mention_author=False); return
+        field = args[1].lower()
+        value = ' '.join(args[2:])
+        allowed = {'name', 'icon', 'color', 'description'}
+        if field not in allowed:
+            await msg.reply(embed=_err(f'Pole: {", ".join(f"`{a}`" for a in allowed)}'),
+                            mention_author=False); return
+        db.update_faction(f['id'], **{field: value})
+        await msg.reply(embed=_ok(f'Zaktualizowano **{f["name"]}**: `{field}` = `{value}`'),
+                        mention_author=False)
+
+    async def _cmd_addfactionrole(self, msg, args):
+        """
+        .addfactionrole <nazwa frakcji> @rola
+        """
+        if len(args) < 2:
+            await msg.reply(embed=_err('`.addfactionrole <frakcja> @rola`'), mention_author=False); return
+        f = db.get_faction_by_name(msg.guild.id, args[0])
+        if not f:
+            await msg.reply(embed=_err('Nie znaleziono frakcji.'), mention_author=False); return
+        rid = args[1].strip('<@&>').strip()
+        try:
+            rid = int(rid)
+        except ValueError:
+            await msg.reply(embed=_err('Nieprawidłowa rola.'), mention_author=False); return
+        role = msg.guild.get_role(rid)
+        if not role:
+            await msg.reply(embed=_err('Rola nie istnieje.'), mention_author=False); return
+        ids = json.loads(f['role_ids'] or '[]')
+        if rid not in ids:
+            ids.append(rid)
+        db.update_faction(f['id'], role_ids=ids)
+        await msg.reply(embed=_ok(f'Dodano {role.mention} do frakcji **{f["icon"]} {f["name"]}**.'),
+                        mention_author=False)
+
+    async def _cmd_removefactionrole(self, msg, args):
+        """
+        .removefactionrole <nazwa frakcji> @rola
+        """
+        if len(args) < 2:
+            await msg.reply(embed=_err('`.removefactionrole <frakcja> @rola`'), mention_author=False); return
+        f = db.get_faction_by_name(msg.guild.id, args[0])
+        if not f:
+            await msg.reply(embed=_err('Nie znaleziono frakcji.'), mention_author=False); return
+        rid = args[1].strip('<@&>').strip()
+        try:
+            rid = int(rid)
+        except ValueError:
+            await msg.reply(embed=_err('Nieprawidłowa rola.'), mention_author=False); return
+        ids = [i for i in json.loads(f['role_ids'] or '[]') if i != rid]
+        db.update_faction(f['id'], role_ids=ids)
+        await msg.reply(embed=_ok(f'Usunięto rolę z frakcji **{f["icon"]} {f["name"]}**.'),
+                        mention_author=False)
+
+    async def _cmd_factions(self, msg, args):
+        factions = db.get_factions(msg.guild.id)
+        if not factions:
+            await msg.reply(embed=_warn('Brak frakcji. Użyj `.createfaction`.'),
+                            mention_author=False); return
+        e = discord.Embed(title='⚔️ Frakcje', color=BLURPLE)
+        for f in factions:
+            ids   = json.loads(f['role_ids'] or '[]')
+            roles = [msg.guild.get_role(r) for r in ids if msg.guild.get_role(r)]
+            val   = (', '.join(r.mention for r in roles) if roles else '*brak ról*')
+            if f.get('description'):
+                val += f'\n*{f["description"]}*'
+            e.add_field(name=f'{f["icon"]} {f["name"]}', value=val, inline=False)
+        await msg.reply(embed=e, mention_author=False)
 
 
 async def setup(bot: commands.Bot):

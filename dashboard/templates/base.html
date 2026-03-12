@@ -87,6 +87,12 @@
       </a>
     </li>
     <li class="nav-item">
+      <a class="nav-link {% if request.endpoint == 'factions_page' %}active{% endif %}"
+         href="{{ url_for('factions_page', guild_id=guild_id) }}">
+        <i class="bi bi-shield-shaded me-2"></i>Frakcje
+      </a>
+    </li>
+    <li class="nav-item">
       <a class="nav-link {% if request.endpoint == 'config_page' %}active{% endif %}"
          href="{{ url_for('config_page', guild_id=guild_id) }}">
         <i class="bi bi-gear me-2"></i>Konfiguracja

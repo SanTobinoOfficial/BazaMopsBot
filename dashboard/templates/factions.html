@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}Frakcje – {{ guild_name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-shield-shaded me-2"></i>Frakcje – {{ guild_name }}</h4>
+  <button class="btn btn-sm btn-discord" data-bs-toggle="modal" data-bs-target="#createModal">
+    <i class="bi bi-plus-lg me-1"></i>Nowa frakcja
+  </button>
+</div>
+
+{% if not factions %}
+<div class="card p-4 text-center text-muted">
+  <i class="bi bi-shield-shaded fs-1 mb-2 d-block"></i>
+  <div>Brak frakcji. Kliknij <strong>Nowa frakcja</strong> albo użyj komendy
+    <code>.createfaction &lt;nazwa&gt; [ikona] [#kolor] [opis]</code>
+  </div>
+</div>
+{% else %}
+<div class="row g-3">
+  {% for f in factions %}
+  {% set f_color = f.color or '#7289da' %}
+  <div class="col-md-6 col-xl-4">
+    <div class="card h-100" style="border-left:4px solid {{ f_color }}">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start mb-2">
+          <h5 class="mb-0">{{ f.icon }} {{ f.name }}</h5>
+          <div class="d-flex gap-1">
+            <button class="btn btn-sm btn-outline-secondary"
+                    data-bs-toggle="modal"
+                    data-bs-target="#editModal{{ f.id }}">
+              <i class="bi bi-pencil"></i>
+            </button>
+            <form method="POST"
+                  action="{{ url_for('faction_delete', guild_id=guild_id, faction_id=f.id) }}"
+                  onsubmit="return confirm('Usunąć frakcję {{ f.name }}?')">
+              <button class="btn btn-sm btn-outline-danger" type="submit">
+                <i class="bi bi-trash"></i>
+              </button>
+            </form>
+          </div>
+        </div>
+
+        {% if f.description %}
+        <p class="text-muted small mb-2">{{ f.description }}</p>
+        {% endif %}
+
+        {% set f_roles = f.role_ids | tojson | replace('"','') | replace('[','') | replace(']','') %}
+        {% set role_id_list = f.role_ids | from_json if f.role_ids else [] %}
+        <div class="mb-2">
+          <small class="text-muted text-uppercase" style="font-size:.7rem;letter-spacing:.05em;">Role</small><br>
+          {% set matched = [] %}
+          {% for r in guild_roles %}
+            {% if r.id | int in role_id_list %}
+              {% set _ = matched.append(r) %}
+            {% endif %}
+          {% endfor %}
+          {% if matched %}
+            {% for r in matched %}
+            <span class="badge bg-secondary me-1">{{ r.name }}</span>
+            {% endfor %}
+          {% else %}
+            <span class="text-muted small">Brak przypisanych ról</span>
+          {% endif %}
+        </div>
+
+        <small class="text-muted">Kolor: <code>{{ f_color }}</code></small>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit modal -->
+  <div class="modal fade" id="editModal{{ f.id }}" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content" style="background:#2c2f33">
+        <form method="POST"
+              action="{{ url_for('faction_edit', guild_id=guild_id, faction_id=f.id) }}">
+          <div class="modal-header border-secondary">
+            <h5 class="modal-title">✏️ Edytuj frakcję – {{ f.name }}</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="row g-2">
+              <div class="col-8">
+                <label class="form-label small">Nazwa</label>
+                <input type="text" name="name" class="form-control form-control-sm"
+                       value="{{ f.name }}" required>
+              </div>
+              <div class="col-4">
+                <label class="form-label small">Ikona</label>
+                <input type="text" name="icon" class="form-control form-control-sm"
+                       value="{{ f.icon }}">
+              </div>
+              <div class="col-6">
+                <label class="form-label small">Kolor</label>
+                <input type="color" name="color" class="form-control form-control-color form-control-sm"
+                       value="{{ f_color }}">
+              </div>
+              <div class="col-12">
+                <label class="form-label small">Opis (opcjonalny)</label>
+                <input type="text" name="description" class="form-control form-control-sm"
+                       value="{{ f.description or '' }}">
+              </div>
+              <div class="col-12">
+                <label class="form-label small">Role frakcji (Ctrl+klik = wiele)</label>
+                <select name="role_ids" multiple class="form-select form-select-sm" style="min-height:120px">
+                  {% for r in guild_roles | sort(attribute='name') %}
+                  {% if r.name != '@everyone' %}
+                  <option value="{{ r.id }}"
+                    {% if r.id | int in (f.role_ids | from_json if f.role_ids else []) %}selected{% endif %}>
+                    {{ r.name }}
+                  </option>
+                  {% endif %}
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer border-secondary">
+            <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Anuluj</button>
+            <button type="submit" class="btn btn-sm btn-discord">Zapisz</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- Create modal -->
+<div class="modal fade" id="createModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content" style="background:#2c2f33">
+      <form method="POST" action="{{ url_for('faction_create', guild_id=guild_id) }}">
+        <div class="modal-header border-secondary">
+          <h5 class="modal-title">⚔️ Nowa frakcja</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row g-2">
+            <div class="col-8">
+              <label class="form-label small">Nazwa *</label>
+              <input type="text" name="name" class="form-control form-control-sm"
+                     placeholder="np. MR, LR, STA…" required>
+            </div>
+            <div class="col-4">
+              <label class="form-label small">Ikona</label>
+              <input type="text" name="icon" class="form-control form-control-sm"
+                     placeholder="⚔️" value="⚔️">
+            </div>
+            <div class="col-6">
+              <label class="form-label small">Kolor</label>
+              <input type="color" name="color" class="form-control form-control-color form-control-sm"
+                     value="#7289da">
+            </div>
+            <div class="col-12">
+              <label class="form-label small">Opis (opcjonalny)</label>
+              <input type="text" name="description" class="form-control form-control-sm"
+                     placeholder="Krótki opis frakcji">
+            </div>
+          </div>
+          <small class="text-muted">Role możesz przypisać po utworzeniu frakcji.</small>
+        </div>
+        <div class="modal-footer border-secondary">
+          <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Anuluj</button>
+          <button type="submit" class="btn btn-sm btn-discord">Utwórz</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

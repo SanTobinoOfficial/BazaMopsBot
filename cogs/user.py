@@ -247,48 +247,123 @@ class UserCog(commands.Cog):
         await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_help(self, msg, args):
-        cfg = db.get_guild(msg.guild.id) or {}
+        gid = msg.guild.id
+        cfg = db.get_guild(gid) or {}
         try:
             admin_ids = json.loads(cfg.get('admin_role_ids') or '[]')
         except Exception:
             admin_ids = []
         is_admin = (msg.author.guild_permissions.administrator or
                     any(r.id in admin_ids for r in msg.author.roles))
+
+        # ── Permission helpers (sync – db calls are synchronous) ──────────────
+        def _user_perm(cmd):
+            """Return True if member can use this user command."""
+            perm = db.get_command_permission(gid, cmd)
+            if perm:
+                try:
+                    allowed = json.loads(perm['allowed_role_ids'])
+                except Exception:
+                    allowed = []
+                if allowed:
+                    return (msg.author.guild_permissions.administrator or
+                            any(r.id in allowed for r in msg.author.roles))
+            return True   # user commands open by default
+
+        def _admin_perm(cmd):
+            """Return True if member can use this admin command."""
+            perm = db.get_command_permission(gid, cmd)
+            if perm:
+                try:
+                    allowed = json.loads(perm['allowed_role_ids'])
+                except Exception:
+                    allowed = []
+                if allowed:
+                    return (msg.author.guild_permissions.administrator or
+                            any(r.id in allowed for r in msg.author.roles))
+            return is_admin   # fall back to generic admin check
+
         e = discord.Embed(title='📖 Pomoc – System Rang',
                           description='Prefix: **`.`** | Panel komend: kanał z przyciskami',
                           color=BLURPLE)
-        e.add_field(name='👤 Użytkownik', inline=False, value=(
-            '`.points [@user]` – punkty\n'
-            '`.rank [@user]` – ranga (auto + specjalne + jednostki)\n'
-            '`.lb` – ranking top 10\n'
-            '`.history` – historia sesji\n'
-            '`.profile [@user]` – pełny profil\n'
-            '`.clock` – status zalogowania\n'
-            '`.help` – ta wiadomość'
-        ))
-        if is_admin:
-            e.add_field(name='🔨 Admin – Punkty', inline=False, value=(
-                '`.addpoints @u <n> [nota]`  `.removepoints @u <n> [nota]`  `.setpoints @u <n> [nota]`'
-            ))
-            e.add_field(name='🔨 Admin – Rangi', inline=False, value=(
-                '`.giverank @u <ranga> [nota]` – nadaj SPECIAL/UNIT\n'
-                '`.takerank @u <ranga>` – odbierz rangę\n'
-                '`.createrank <n> <pkt|SPECIAL|UNIT> [ikona] [#kolor] [opis]`\n'
-                '`.deleterank <nazwa>`  `.editrank <nazwa> <pole> <wartość>`  `.ranks`'
-            ))
-            e.add_field(name='🔨 Admin – Ostrzeżenia', inline=False, value=(
-                '`.warn @u [powód]`  `.warnings [@u]`  `.clearwarn @u [id]`'
-            ))
-            e.add_field(name='🔨 Admin – Zarządzanie', inline=False, value=(
-                '`.userinfo @u`  `.forceclockout @u`  `.resetuser @u`\n'
-                '`.ban @u`  `.unban @u`  `.serverstats`\n'
-                '`.setchannel <clock|log|panel> #ch`  `.setpoints_h <n>`\n'
-                '`.adminrole @r`  `.removeadminrole @r`  `.setowner @u`\n'
-                '`.setwarnlimit <n>`  `.setmaxhours <h>`  `.config`  `.apel`'
-            ))
-            e.add_field(name='🔨 Admin – Panel', inline=False, value=(
-                '`.panel` – utwórz/odśwież panel komend w skonfigurowanym kanale'
-            ))
+
+        # ── User commands (filtered) ──────────────────────────────────────────
+        user_defs = [
+            ('points',   '`.points [@user]`',   'punkty, ranga, postęp do następnej'),
+            ('rank',     '`.rank [@user]`',     'ranga auto + specjalne + jednostki'),
+            ('lb',       '`.lb`',               'ranking top 10'),
+            ('history',  '`.history`',          'historia sesji clock in/out'),
+            ('profile',  '`.profile [@user]`',  'pełny profil z ostatnimi sesjami'),
+            ('clock',    '`.clock`',            'aktualny status zalogowania'),
+            ('help',     '`.help`',             'ta wiadomość'),
+        ]
+        user_lines = [f'{s} – {d}' for cmd, s, d in user_defs if _user_perm(cmd)]
+        e.add_field(name='👤 Użytkownik', inline=False,
+                    value='\n'.join(user_lines) if user_lines else '*Brak dostępnych komend.*')
+
+        if not is_admin:
+            await msg.reply(embed=e, mention_author=False)
+            return
+
+        # ── Admin commands (filtered per-command) ─────────────────────────────
+        pts_defs = [
+            ('addpoints',    '`.addpoints @u <n> [nota]`'),
+            ('removepoints', '`.removepoints @u <n> [nota]`'),
+            ('setpoints',    '`.setpoints @u <n> [nota]`'),
+        ]
+        pts_lines = [s for cmd, s in pts_defs if _admin_perm(cmd)]
+        if pts_lines:
+            e.add_field(name='🔨 Admin – Punkty', inline=False,
+                        value='  '.join(pts_lines))
+
+        rank_defs = [
+            ('giverank',   '`.giverank @u <ranga> [nota]` – nadaj SPECIAL/UNIT'),
+            ('takerank',   '`.takerank @u <ranga>` – odbierz rangę'),
+            ('createrank', '`.createrank <n> <pkt|SPECIAL|UNIT> [ikona] [#kolor] [opis]`'),
+            ('deleterank', '`.deleterank <nazwa>`'),
+            ('editrank',   '`.editrank <nazwa> <pole> <wartość>`'),
+            ('ranks',      '`.ranks` – lista rang'),
+        ]
+        rank_lines = [s for cmd, s in rank_defs if _admin_perm(cmd)]
+        if rank_lines:
+            e.add_field(name='🔨 Admin – Rangi', inline=False,
+                        value='\n'.join(rank_lines))
+
+        warn_defs = [
+            ('warn',      '`.warn @u [powód]`'),
+            ('warnings',  '`.warnings [@u]`'),
+            ('clearwarn', '`.clearwarn @u [id]`'),
+        ]
+        warn_lines = [s for cmd, s in warn_defs if _admin_perm(cmd)]
+        if warn_lines:
+            e.add_field(name='🔨 Admin – Ostrzeżenia', inline=False,
+                        value='  '.join(warn_lines))
+
+        mgmt_defs = [
+            ('userinfo',        '`.userinfo @u`'),
+            ('forceclockout',   '`.forceclockout @u`'),
+            ('resetuser',       '`.resetuser @u`'),
+            ('ban',             '`.ban @u`'),
+            ('unban',           '`.unban @u`'),
+            ('serverstats',     '`.serverstats`'),
+            ('setchannel',      '`.setchannel <clock|log|panel> #ch`'),
+            ('setpoints_h',     '`.setpoints_h <n>`'),
+            ('adminrole',       '`.adminrole @r`'),
+            ('removeadminrole', '`.removeadminrole @r`'),
+            ('setowner',        '`.setowner @u`'),
+            ('setwarnlimit',    '`.setwarnlimit <n>`'),
+            ('setmaxhours',     '`.setmaxhours <h>`'),
+            ('config',          '`.config`'),
+            ('apel',            '`.apel` – wyślij embed Clock In/Out na bieżący kanał'),
+        ]
+        mgmt_lines = [s for cmd, s in mgmt_defs if _admin_perm(cmd)]
+        if mgmt_lines:
+            e.add_field(name='🔨 Admin – Zarządzanie', inline=False,
+                        value='\n'.join(mgmt_lines))
+
+        # panel is handled by PanelCog (no per-command DB entry by default)
+        e.add_field(name='🔨 Admin – Panel', inline=False,
+                    value='`.panel` – utwórz/odśwież panel komend w skonfigurowanym kanale')
         await msg.reply(embed=e, mention_author=False)
 
 

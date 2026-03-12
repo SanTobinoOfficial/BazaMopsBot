@@ -143,6 +143,47 @@
         </div>
         <small class="text-muted">Po osiągnięciu tego limitu użytkownik zostanie zablokowany z rankingu.</small>
       </div>
+
+      <div class="mb-0">
+        <label class="form-label text-muted small">⏳ Cooldown clock-in (minuty)</label>
+        <div class="input-group">
+          <input type="number" name="clock_cooldown_min"
+                 class="form-control bg-dark border-secondary text-white"
+                 value="{{ cfg.clock_cooldown_min or 0 }}" step="1" min="0" max="60">
+          <span class="input-group-text bg-dark border-secondary text-muted">min</span>
+        </div>
+        <small class="text-muted">Minimalny czas między zakończeniem jednej a rozpoczęciem kolejnej sesji. 0 = brak.</small>
+      </div>
+    </div>
+  </div>
+
+  <!-- Streak & Notifications -->
+  <div class="col-lg-6">
+    <div class="card p-3">
+      <div class="section-title"><i class="bi bi-fire me-1"></i>Seria i powiadomienia</div>
+
+      <div class="mb-3">
+        <label class="form-label text-muted small">🔥 Bonus serii (% za każdy dzień)</label>
+        <div class="input-group">
+          <input type="number" name="streak_bonus_pct"
+                 class="form-control bg-dark border-secondary text-white"
+                 value="{{ cfg.streak_bonus_pct or 5.0 }}" step="0.5" min="0" max="50">
+          <span class="input-group-text bg-dark border-secondary text-muted">%/dzień</span>
+        </div>
+        <small class="text-muted">Za każdy dzień serii użytkownik dostaje +X% do punktów za sesję. Przykład: seria 5 dni × 5% = +25%.</small>
+      </div>
+
+      <div class="mb-0">
+        <label class="form-label text-muted small">🔔 Powiadomienia DM</label>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" name="dm_notifications"
+                 id="dm_notifications" value="1"
+                 {% if cfg.dm_notifications %}checked{% endif %}>
+          <label class="form-check-label text-muted small" for="dm_notifications">
+            Wysyłaj prywatne wiadomości do użytkowników (awanse rang, warny, anti-cheat, blisko rangi)
+          </label>
+        </div>
+      </div>
     </div>
   </div>
 

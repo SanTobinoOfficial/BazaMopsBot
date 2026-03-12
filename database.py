@@ -1,7 +1,7 @@
 import sqlite3
 import threading
 import json
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional, List, Dict, Any
 
 DATABASE_FILE = 'data/bot.db'
@@ -34,6 +34,9 @@ def init_db():
                 min_clock_minutes         INTEGER DEFAULT 5,
                 auto_clockout_hours       INTEGER DEFAULT 12,
                 warn_limit                INTEGER DEFAULT 3,
+                streak_bonus_pct          REAL    DEFAULT 5.0,
+                dm_notifications          INTEGER DEFAULT 1,
+                clock_cooldown_min        INTEGER DEFAULT 0,
                 embed_schedule            TEXT    DEFAULT '{DEFAULT_SCHEDULE}',
                 created_at                TEXT    DEFAULT (datetime('now'))
             );
@@ -49,6 +52,9 @@ def init_db():
                 is_banned      INTEGER DEFAULT 0,
                 is_clocked_in  INTEGER DEFAULT 0,
                 clock_in_time  TEXT    DEFAULT NULL,
+                streak_days    INTEGER DEFAULT 0,
+                last_active_date TEXT  DEFAULT NULL,
+                admin_notes    TEXT    DEFAULT '',
                 created_at     TEXT    DEFAULT (datetime('now')),
                 updated_at     TEXT    DEFAULT (datetime('now')),
                 PRIMARY KEY (user_id, guild_id)
@@ -139,16 +145,18 @@ def init_db():
             );
 
             CREATE TABLE IF NOT EXISTS announcements (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                guild_id   INTEGER NOT NULL,
-                channel_id INTEGER NOT NULL,
-                title      TEXT    DEFAULT '',
-                content    TEXT    NOT NULL,
-                is_embed   INTEGER DEFAULT 1,
-                color      TEXT    DEFAULT '#7289da',
-                sent_by    TEXT    DEFAULT 'Dashboard',
-                message_id INTEGER DEFAULT NULL,
-                created_at TEXT    DEFAULT (datetime('now'))
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id     INTEGER NOT NULL,
+                channel_id   INTEGER NOT NULL,
+                title        TEXT    DEFAULT '',
+                content      TEXT    NOT NULL,
+                is_embed     INTEGER DEFAULT 1,
+                color        TEXT    DEFAULT '#7289da',
+                sent_by      TEXT    DEFAULT 'Dashboard',
+                message_id   INTEGER DEFAULT NULL,
+                scheduled_at TEXT    DEFAULT NULL,
+                is_sent      INTEGER DEFAULT 1,
+                created_at   TEXT    DEFAULT (datetime('now'))
             );
 
             CREATE TABLE IF NOT EXISTS action_logs (
@@ -170,6 +178,29 @@ def init_db():
                 created_at TEXT    DEFAULT (datetime('now')),
                 UNIQUE(guild_id, panel_type)
             );
+
+            CREATE TABLE IF NOT EXISTS rank_history (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id    INTEGER NOT NULL,
+                guild_id   INTEGER NOT NULL,
+                rank_id    INTEGER DEFAULT NULL,
+                rank_name  TEXT    NOT NULL,
+                action     TEXT    NOT NULL,
+                points_at  REAL    DEFAULT 0,
+                created_at TEXT    DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS factions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id    INTEGER NOT NULL,
+                name        TEXT    NOT NULL,
+                icon        TEXT    DEFAULT '⚔️',
+                color       TEXT    DEFAULT '#7289da',
+                role_ids    TEXT    DEFAULT '[]',
+                description TEXT    DEFAULT '',
+                created_at  TEXT    DEFAULT (datetime('now')),
+                UNIQUE(guild_id, name)
+            );
         ''')
         conn.commit()
         _run_migrations(conn)
@@ -183,9 +214,22 @@ def _run_migrations(conn):
         "ALTER TABLE guilds ADD COLUMN warn_limit INTEGER DEFAULT 3",
         "ALTER TABLE guilds ADD COLUMN auto_clockout_hours INTEGER DEFAULT 12",
         "ALTER TABLE guilds ADD COLUMN owner_id INTEGER DEFAULT NULL",
+        "ALTER TABLE guilds ADD COLUMN streak_bonus_pct REAL DEFAULT 5.0",
+        "ALTER TABLE guilds ADD COLUMN dm_notifications INTEGER DEFAULT 1",
+        "ALTER TABLE guilds ADD COLUMN clock_cooldown_min INTEGER DEFAULT 0",
         "ALTER TABLE ranks ADD COLUMN is_owner_only INTEGER DEFAULT 0",
         "ALTER TABLE ranks ADD COLUMN grant_role_ids TEXT DEFAULT '[]'",
         "ALTER TABLE clock_sessions ADD COLUMN flagged INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN streak_days INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN last_active_date TEXT DEFAULT NULL",
+        "ALTER TABLE users ADD COLUMN admin_notes TEXT DEFAULT ''",
+        "ALTER TABLE announcements ADD COLUMN scheduled_at TEXT DEFAULT NULL",
+        "ALTER TABLE announcements ADD COLUMN is_sent INTEGER DEFAULT 1",
+        "ALTER TABLE daily_embeds ADD COLUMN host_id INTEGER DEFAULT NULL",
+        "ALTER TABLE daily_embeds ADD COLUMN co_host_id INTEGER DEFAULT NULL",
+        "ALTER TABLE daily_embeds ADD COLUMN event_type TEXT DEFAULT 'Zmiana'",
+        "ALTER TABLE daily_embeds ADD COLUMN is_finished INTEGER DEFAULT 0",
+        "ALTER TABLE daily_embeds ADD COLUMN finished_at TEXT DEFAULT NULL",
     ]
     for m in migrations:
         try:
@@ -332,7 +376,8 @@ def reset_user(user_id: int, guild_id: int) -> None:
         with _get_conn() as conn:
             conn.execute(
                 '''UPDATE users SET points=0,total_hours=0,sessions_count=0,
-                   is_banned=0,is_clocked_in=0,clock_in_time=NULL,updated_at=?
+                   is_banned=0,is_clocked_in=0,clock_in_time=NULL,
+                   streak_days=0,last_active_date=NULL,updated_at=?
                    WHERE user_id=? AND guild_id=?''',
                 (datetime.now().isoformat(), user_id, guild_id)
             )
@@ -358,6 +403,38 @@ def get_leaderboard(guild_id: int, limit: int = 10,
             q += ' AND is_banned=0'
         q += ' ORDER BY points DESC LIMIT ?'
         return [dict(r) for r in conn.execute(q, (guild_id, limit)).fetchall()]
+
+
+def update_user_notes(user_id: int, guild_id: int, notes: str) -> None:
+    update_user(user_id, guild_id, admin_notes=notes)
+
+
+# ─── Streak ───────────────────────────────────────────────────────────────────
+
+def update_streak(user_id: int, guild_id: int, today: str) -> int:
+    """Update consecutive-day streak on clock_out. Returns new streak count."""
+    u = get_user(user_id, guild_id)
+    if not u:
+        return 0
+    last_date = u.get('last_active_date')
+    current_streak = u.get('streak_days', 0) or 0
+    try:
+        today_d = date.fromisoformat(today)
+        if last_date:
+            last_d = date.fromisoformat(last_date)
+            diff = (today_d - last_d).days
+            if diff == 0:
+                new_streak = max(current_streak, 1)   # Same day – keep current
+            elif diff == 1:
+                new_streak = current_streak + 1        # Consecutive day – extend
+            else:
+                new_streak = 1                         # Gap – reset
+        else:
+            new_streak = 1
+    except Exception:
+        new_streak = 1
+    update_user(user_id, guild_id, streak_days=new_streak, last_active_date=today)
+    return new_streak
 
 
 # ─── Ranks ────────────────────────────────────────────────────────────────────
@@ -485,7 +562,45 @@ def remove_special_rank(user_id: int, guild_id: int, rank_id: int) -> bool:
             return cur.rowcount > 0
 
 
+# ─── Rank History ─────────────────────────────────────────────────────────────
+
+def add_rank_history(user_id: int, guild_id: int, rank_name: str,
+                     action: str, points_at: float, rank_id: int = None) -> None:
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute(
+                'INSERT INTO rank_history (user_id,guild_id,rank_id,rank_name,action,points_at) VALUES (?,?,?,?,?,?)',
+                (user_id, guild_id, rank_id, rank_name, action, points_at)
+            )
+            conn.commit()
+
+
+def get_rank_history(user_id: int, guild_id: int, limit: int = 20) -> List[Dict]:
+    with _get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            'SELECT * FROM rank_history WHERE user_id=? AND guild_id=? ORDER BY created_at DESC LIMIT ?',
+            (user_id, guild_id, limit)
+        ).fetchall()]
+
+
 # ─── Clock ────────────────────────────────────────────────────────────────────
+
+def get_last_session_end(user_id: int, guild_id: int) -> Optional[datetime]:
+    """Returns datetime of last clock_out, or None."""
+    with _get_conn() as conn:
+        row = conn.execute(
+            '''SELECT clock_out_time FROM clock_sessions
+               WHERE user_id=? AND guild_id=? AND clock_out_time IS NOT NULL
+               ORDER BY clock_out_time DESC LIMIT 1''',
+            (user_id, guild_id)
+        ).fetchone()
+        if row and row['clock_out_time']:
+            try:
+                return datetime.fromisoformat(row['clock_out_time'])
+            except Exception:
+                pass
+    return None
+
 
 def clock_in(user_id: int, guild_id: int) -> Optional[Dict]:
     u = get_user(user_id, guild_id)
@@ -721,15 +836,19 @@ def get_all_command_permissions(guild_id: int) -> Dict[str, List[int]]:
 
 def save_announcement(guild_id: int, channel_id: int, title: str,
                       content: str, is_embed: bool, color: str,
-                      sent_by: str, message_id: int = None) -> int:
+                      sent_by: str, message_id: int = None,
+                      scheduled_at: str = None) -> int:
+    is_sent = 0 if scheduled_at else 1
     with _lock:
         with _get_conn() as conn:
             cur = conn.execute(
                 '''INSERT INTO announcements
-                   (guild_id,channel_id,title,content,is_embed,color,sent_by,message_id)
-                   VALUES (?,?,?,?,?,?,?,?)''',
+                   (guild_id,channel_id,title,content,is_embed,color,sent_by,
+                    message_id,scheduled_at,is_sent)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)''',
                 (guild_id, channel_id, title, content,
-                 1 if is_embed else 0, color, sent_by, message_id)
+                 1 if is_embed else 0, color, sent_by,
+                 message_id, scheduled_at, is_sent)
             )
             conn.commit()
             return cur.lastrowid
@@ -741,6 +860,29 @@ def get_announcements(guild_id: int, limit: int = 20) -> List[Dict]:
             'SELECT * FROM announcements WHERE guild_id=? ORDER BY created_at DESC LIMIT ?',
             (guild_id, limit)
         ).fetchall()]
+
+
+def get_due_announcements() -> List[Dict]:
+    """Returns scheduled announcements that are due and not yet sent."""
+    now = datetime.now().isoformat()
+    with _get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            'SELECT * FROM announcements WHERE scheduled_at IS NOT NULL AND scheduled_at <= ? AND is_sent=0',
+            (now,)
+        ).fetchall()]
+
+
+def mark_announcement_sent(ann_id: int, message_id: int = None) -> None:
+    with _lock:
+        with _get_conn() as conn:
+            if message_id:
+                conn.execute(
+                    'UPDATE announcements SET is_sent=1, message_id=? WHERE id=?',
+                    (message_id, ann_id)
+                )
+            else:
+                conn.execute('UPDATE announcements SET is_sent=1 WHERE id=?', (ann_id,))
+            conn.commit()
 
 
 # ─── Action logs ──────────────────────────────────────────────────────────────
@@ -818,6 +960,99 @@ def get_daily_embed(guild_id: int, embed_date: str) -> Optional[Dict]:
         return dict(row) if row else None
 
 
+def update_daily_embed_meta(guild_id: int, embed_date: str, **kwargs) -> None:
+    """Update metadata columns (host_id, co_host_id, event_type, is_finished, etc.)"""
+    if not kwargs:
+        return
+    set_clause = ', '.join(f'{k}=?' for k in kwargs)
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute(
+                f'UPDATE daily_embeds SET {set_clause} WHERE guild_id=? AND embed_date=?',
+                [*kwargs.values(), guild_id, embed_date]
+            )
+            conn.commit()
+
+
+# ─── Factions ─────────────────────────────────────────────────────────────────
+
+def get_factions(guild_id: int) -> List[Dict]:
+    with _get_conn() as conn:
+        rows = conn.execute(
+            'SELECT * FROM factions WHERE guild_id=? ORDER BY name', (guild_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_faction_by_id(faction_id: int) -> Optional[Dict]:
+    with _get_conn() as conn:
+        row = conn.execute('SELECT * FROM factions WHERE id=?', (faction_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def get_faction_by_name(guild_id: int, name: str) -> Optional[Dict]:
+    with _get_conn() as conn:
+        row = conn.execute(
+            'SELECT * FROM factions WHERE guild_id=? AND LOWER(name)=LOWER(?)',
+            (guild_id, name)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def create_faction(guild_id: int, name: str, icon: str = '⚔️',
+                   color: str = '#7289da', role_ids: list = None,
+                   description: str = '') -> Optional[Dict]:
+    import json as _json
+    with _lock:
+        with _get_conn() as conn:
+            try:
+                conn.execute(
+                    'INSERT INTO factions (guild_id,name,icon,color,role_ids,description) VALUES (?,?,?,?,?,?)',
+                    (guild_id, name, icon, color, _json.dumps(role_ids or []), description)
+                )
+                conn.commit()
+            except Exception:
+                return None
+    return get_faction_by_name(guild_id, name)
+
+
+def update_faction(faction_id: int, **kwargs) -> None:
+    if not kwargs:
+        return
+    import json as _json
+    if 'role_ids' in kwargs and isinstance(kwargs['role_ids'], list):
+        kwargs['role_ids'] = _json.dumps(kwargs['role_ids'])
+    set_clause = ', '.join(f'{k}=?' for k in kwargs)
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute(
+                f'UPDATE factions SET {set_clause} WHERE id=?',
+                [*kwargs.values(), faction_id]
+            )
+            conn.commit()
+
+
+def delete_faction(faction_id: int) -> None:
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute('DELETE FROM factions WHERE id=?', (faction_id,))
+            conn.commit()
+
+
+def get_user_faction(guild_id: int, member_role_ids: List[int]) -> Optional[Dict]:
+    """Return first faction whose role_ids intersect with member_role_ids."""
+    import json as _json
+    factions = get_factions(guild_id)
+    for f in factions:
+        try:
+            f_roles = _json.loads(f['role_ids'])
+        except Exception:
+            f_roles = []
+        if any(rid in f_roles for rid in member_role_ids):
+            return f
+    return None
+
+
 # ─── Stats ────────────────────────────────────────────────────────────────────
 
 def get_guild_stats(guild_id: int) -> Dict:
@@ -835,3 +1070,33 @@ def get_guild_stats(guild_id: int) -> Dict:
             'rank_count':     sc('SELECT COUNT(*) FROM ranks WHERE guild_id=?', guild_id),
             'warning_count':  sc('SELECT COUNT(*) FROM warnings WHERE guild_id=?', guild_id),
         }
+
+
+def get_daily_activity(guild_id: int, days: int = 14) -> List[Dict]:
+    """Returns per-day stats for the last N days: date, total_points, active_users, sessions."""
+    result = []
+    today = date.today()
+    with _get_conn() as conn:
+        for i in range(days - 1, -1, -1):
+            d = (today - timedelta(days=i)).isoformat()
+            pts = conn.execute(
+                '''SELECT COALESCE(SUM(points_change), 0) FROM point_transactions
+                   WHERE guild_id=? AND transaction_type IN ('clock','streak_bonus')
+                   AND date(created_at)=?''',
+                (guild_id, d)
+            ).fetchone()
+            users = conn.execute(
+                'SELECT COUNT(DISTINCT user_id) FROM clock_sessions WHERE guild_id=? AND session_date=?',
+                (guild_id, d)
+            ).fetchone()
+            sessions = conn.execute(
+                'SELECT COUNT(*) FROM clock_sessions WHERE guild_id=? AND session_date=?',
+                (guild_id, d)
+            ).fetchone()
+            result.append({
+                'date': d,
+                'points': round(float(list(pts)[0] or 0), 1),
+                'active_users': int(list(users)[0] or 0),
+                'sessions': int(list(sessions)[0] or 0),
+            })
+    return result

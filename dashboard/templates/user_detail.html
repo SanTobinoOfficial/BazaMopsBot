@@ -45,10 +45,16 @@
         </div>
         <div class="col-6">
           <div class="card p-2 text-center">
+            <div class="section-title">🔥 Seria</div>
+            <div class="fw-bold" style="color:#e67e22">{{ user.streak_days or 0 }} dni</div>
+          </div>
+        </div>
+        <div class="col-12">
+          <div class="card p-2 text-center">
             <div class="section-title">Status</div>
             <div>
               {% if user.is_clocked_in %}<span class="text-success fw-bold">🟢 Aktywny</span>
-              {% else %}<span class="text-muted">⚫ Nieakt.</span>{% endif %}
+              {% else %}<span class="text-muted">⚫ Nieaktywny</span>{% endif %}
             </div>
           </div>
         </div>
@@ -159,6 +165,17 @@
       </div>
     </div>
 
+    <!-- Admin notes -->
+    <div class="card p-3 mb-3">
+      <div class="section-title"><i class="bi bi-journal-text me-1"></i>Notatki admina</div>
+      <form method="POST" action="{{ url_for('save_user_notes', guild_id=guild_id, user_id=user_id) }}">
+        <textarea name="notes" rows="3"
+                  class="form-control form-control-sm bg-dark border-secondary text-white mb-2"
+                  placeholder="Prywatne notatki o użytkowniku (widoczne tylko w dashboardzie)...">{{ user.admin_notes or '' }}</textarea>
+        <button class="btn btn-sm btn-discord"><i class="bi bi-save me-1"></i>Zapisz notatki</button>
+      </form>
+    </div>
+
     <!-- Transaction history -->
     <div class="card p-3 mb-3">
       <div class="section-title"><i class="bi bi-list-ul me-1"></i>Historia Transakcji</div>
@@ -190,7 +207,7 @@
     </div>
 
     <!-- Session history -->
-    <div class="card p-3">
+    <div class="card p-3 mb-3">
       <div class="section-title"><i class="bi bi-clock-history me-1"></i>Historia Sesji Clock In/Out</div>
       {% if sessions %}
       <div class="table-responsive">
@@ -216,6 +233,34 @@
       <p class="text-muted small mb-0">Brak historii sesji.</p>
       {% endif %}
     </div>
+
+    <!-- Rank history -->
+    {% if rank_history %}
+    <div class="card p-3">
+      <div class="section-title"><i class="bi bi-star me-1"></i>Historia rang</div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+          <thead><tr><th>Data</th><th>Ranga</th><th>Akcja</th><th>Punkty</th></tr></thead>
+          <tbody>
+          {% for rh in rank_history %}
+          <tr>
+            <td class="text-muted small">{{ rh.created_at[:16] | replace('T', ' ') }}</td>
+            <td class="text-white small">{{ rh.rank_name }}</td>
+            <td>
+              {% if rh.action == 'gained' %}
+              <span class="badge bg-success">⬆️ Zdobyta</span>
+              {% else %}
+              <span class="badge bg-warning text-dark">⬇️ Utracona</span>
+              {% endif %}
+            </td>
+            <td class="text-muted small">{{ rh.points_at | round(1) }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

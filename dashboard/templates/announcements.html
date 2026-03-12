@@ -153,6 +153,22 @@
             </div>
           </div>
 
+          <!-- Scheduled send -->
+          <div class="mb-3">
+            <label class="form-label text-muted small fw-semibold">
+              <div class="form-check form-check-inline mb-0">
+                <input class="form-check-input" type="checkbox" id="scheduleToggle">
+                <label class="form-check-label" for="scheduleToggle">⏰ Zaplanuj wysyłkę</label>
+              </div>
+            </label>
+            <div id="scheduledAtContainer" style="display:none" class="mt-2">
+              <input type="datetime-local" name="scheduled_at" id="scheduledAtInput"
+                     class="form-control bg-dark border-secondary text-white"
+                     style="width:auto">
+              <small class="text-muted d-block mt-1">Bot wyśle ogłoszenie automatycznie w wybranym czasie.</small>
+            </div>
+          </div>
+
           <div class="d-flex gap-2">
             <button type="submit" class="btn btn-discord" id="sendBtn">
               <i class="bi bi-send me-1"></i>Wyślij ogłoszenie
@@ -172,7 +188,7 @@
     <div class="card">
       <div class="card-header d-flex justify-content-between align-items-center">
         <span><i class="bi bi-clock-history me-2"></i>Historia ogłoszeń</span>
-        <span class="badge bg-secondary">{{ announcements | length }}</span>
+        <span class="badge bg-secondary">{{ announcements|length }}</span>
       </div>
       <div class="card-body p-2" style="max-height:600px;overflow-y:auto;">
         {% if announcements %}
@@ -267,12 +283,32 @@ document.querySelectorAll('input[name="announce_type"]').forEach(radio => {
   });
 });
 
+// Scheduled toggle
+const scheduleToggle = document.getElementById('scheduleToggle');
+const scheduledAtContainer = document.getElementById('scheduledAtContainer');
+const scheduledAtInput = document.getElementById('scheduledAtInput');
+const sendBtn = document.getElementById('sendBtn');
+if (scheduleToggle) {
+  scheduleToggle.addEventListener('change', () => {
+    const isScheduled = scheduleToggle.checked;
+    scheduledAtContainer.style.display = isScheduled ? '' : 'none';
+    scheduledAtInput.required = isScheduled;
+    sendBtn.innerHTML = isScheduled
+      ? '<i class="bi bi-clock me-1"></i>Zaplanuj ogłoszenie'
+      : '<i class="bi bi-send me-1"></i>Wyślij ogłoszenie';
+  });
+}
+
 // Confirm before send
 document.getElementById('announcementForm').addEventListener('submit', e => {
   const ch = document.querySelector('select[name="channel_id"]').value;
   const txt = contentArea.value.trim();
   if (!ch || !txt) return;
-  if (!confirm('Czy na pewno chcesz wysłać to ogłoszenie na Discord?')) {
+  const isScheduled = scheduleToggle && scheduleToggle.checked;
+  const msg = isScheduled
+    ? 'Zaplanować wysyłkę tego ogłoszenia?'
+    : 'Czy na pewno chcesz wysłać to ogłoszenie na Discord?';
+  if (!confirm(msg)) {
     e.preventDefault();
   }
 });
