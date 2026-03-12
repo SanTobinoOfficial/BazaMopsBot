@@ -49,7 +49,7 @@
             </thead>
             <tbody>
             {% for cmd_name in commands %}
-            {% set perm = permissions.get(cmd_name, {}) %}
+            {% set perm = current_perms.get(cmd_name, {}) %}
             <tr>
               <td>
                 <code class="text-warning">.{{ cmd_name }}</code>
