@@ -17,16 +17,19 @@ class BotMops(commands.Bot):
         await self.load_extension('cogs.admin')
         await self.load_extension('cogs.user')
         await self.load_extension('cogs.panel')
+        await self.load_extension('cogs.jobs')
         # Re-register ALL persistent views after restart
         from cogs.clockin import ClockView, SessionClockView
         from cogs.panel import (StatsPanelView, ActivityPanelView,
                                 ServerPanelView, AdminPanelView)
+        from cogs.jobs import JobPanelView
         self.add_view(ClockView())          # backward compat for old embeds
         self.add_view(SessionClockView())   # new session embeds
         self.add_view(StatsPanelView())
         self.add_view(ActivityPanelView())
         self.add_view(ServerPanelView())
         self.add_view(AdminPanelView())
+        self.add_view(JobPanelView())       # job selection panel
 
     async def on_ready(self):
         print(f'✅ Zalogowano jako {self.user} (ID: {self.user.id})')

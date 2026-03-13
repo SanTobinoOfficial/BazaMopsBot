@@ -1,9 +1,6 @@
-modules = ["python-3.12", "web"]
+modules = ["python-3.11"]
 [agent]
 expertMode = true
-
-[nix]
-channel = "stable-25_05"
 
 [workflows]
 runButton = "Project"
@@ -32,7 +29,3 @@ outputType = "webview"
 [[ports]]
 localPort = 5000
 externalPort = 80
-
-[deployment]
-deploymentTarget = "vm"
-run = ["python", "main.py"]

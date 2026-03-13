@@ -11,6 +11,18 @@ YELLOW  = 0xFAA61A
 MEDALS  = ['🥇', '🥈', '🥉']
 
 
+def _prog_bar(current: float, next_pts: float, from_pts: float = 0,
+              width: int = 10) -> str:
+    """Returns an ASCII progress bar like '████░░░░░░ 30/50 pkt'."""
+    span = next_pts - from_pts
+    if span <= 0:
+        filled = width
+    else:
+        filled = int(min(width, max(0, round((current - from_pts) / span * width))))
+    bar = '█' * filled + '░' * (width - filled)
+    return f'`{bar}` {current:.0f}/{next_pts:.0f} pkt'
+
+
 class UserCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -77,9 +89,8 @@ class UserCog(commands.Cog):
                             mention_author=False); return
         db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
         u = db.get_user(m.id, msg.guild.id)
-        rank = db.get_user_auto_rank(m.id, msg.guild.id)
-        ranks = db.get_ranks(msg.guild.id, auto_only=True)
-        next_r = next((r for r in ranks if r['required_points'] > u['points']), None)
+        rank   = db.get_user_auto_rank(m.id, msg.guild.id)
+        next_r = db.get_user_next_rank(m.id, msg.guild.id)
         e = discord.Embed(title=f'💰 Punkty – {m.display_name}', color=BLURPLE)
         e.set_thumbnail(url=m.display_avatar.url)
         e.add_field(name='Punkty', value=f'**{u["points"]:.1f}** pkt', inline=True)
@@ -88,9 +99,10 @@ class UserCog(commands.Cog):
         if rank:
             e.add_field(name='Obecna ranga', value=f'{rank["icon"]} {rank["name"]}', inline=False)
         if next_r:
-            e.add_field(name='Następna ranga',
-                        value=f'{next_r["icon"]} {next_r["name"]} – brakuje **{next_r["required_points"]-u["points"]:.1f} pkt**',
-                        inline=False)
+            from_pts = rank['required_points'] if rank else 0
+            bar = _prog_bar(u['points'], next_r['required_points'], from_pts)
+            e.add_field(name=f'Postęp → {next_r["icon"]} {next_r["name"]}',
+                        value=bar, inline=False)
         warns = db.get_warning_count(m.id, msg.guild.id)
         cfg = db.get_guild(msg.guild.id) or {}
         if warns > 0:
@@ -103,23 +115,38 @@ class UserCog(commands.Cog):
             await msg.reply(embed=discord.Embed(description='❌ Nie znaleziono.', color=RED),
                             mention_author=False); return
         db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
-        u = db.get_user(m.id, msg.guild.id)
-        auto = db.get_user_auto_rank(m.id, msg.guild.id)
+        u       = db.get_user(m.id, msg.guild.id)
+        auto    = db.get_user_auto_rank(m.id, msg.guild.id)
+        next_r  = db.get_user_next_rank(m.id, msg.guild.id)
         specials = db.get_user_special_ranks(m.id, msg.guild.id)
-        units = [r for r in specials if r.get('is_owner_only')]
+        units   = [r for r in specials if r.get('is_owner_only')]
         normals = [r for r in specials if not r.get('is_owner_only')]
+        faction = db.get_user_faction_membership(m.id, msg.guild.id)
         color = BLURPLE
         if auto and auto.get('color'):
             try:
                 color = int(auto['color'].lstrip('#'), 16)
             except Exception:
                 pass
+        elif faction and faction.get('faction_color'):
+            try:
+                color = int(faction['faction_color'].lstrip('#'), 16)
+            except Exception:
+                pass
         e = discord.Embed(title=f'⭐ Ranga – {m.display_name}', color=color)
         e.set_thumbnail(url=m.display_avatar.url)
         e.add_field(name='💰 Punkty', value=f'{u["points"]:.1f}', inline=True)
+        if faction:
+            e.add_field(name='⚔️ Frakcja',
+                        value=f'{faction["faction_icon"]} **{faction["faction_name"]}**', inline=True)
         e.add_field(name='🤖 Ranga automatyczna',
-                    value=f'{auto["icon"]} **{auto["name"]}** ({auto["required_points"]:.0f} pkt)' if auto else 'Brak',
+                    value=f'{auto["icon"]} **{auto["name"]}** ({auto["required_points"]:.0f} pkt)' if auto else 'Brak (cywil)',
                     inline=False)
+        if next_r:
+            from_pts = auto['required_points'] if auto else 0
+            bar = _prog_bar(u['points'], next_r['required_points'], from_pts)
+            e.add_field(name=f'Postęp → {next_r["icon"]} {next_r["name"]}',
+                        value=bar, inline=False)
         if units:
             e.add_field(name='👑 Jednostki',
                         value='\n'.join(f'{r["icon"]} **{r["name"]}**' + (f' – {r["note"]}' if r.get("note") else '') for r in units),
@@ -180,16 +207,24 @@ class UserCog(commands.Cog):
             await msg.reply(embed=discord.Embed(description='❌ Nie znaleziono.', color=RED),
                             mention_author=False); return
         db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
-        u = db.get_user(m.id, msg.guild.id)
-        auto = db.get_user_auto_rank(m.id, msg.guild.id)
+        u       = db.get_user(m.id, msg.guild.id)
+        auto    = db.get_user_auto_rank(m.id, msg.guild.id)
+        next_r  = db.get_user_next_rank(m.id, msg.guild.id)
         specials = db.get_user_special_ranks(m.id, msg.guild.id)
         sessions = db.get_user_sessions(m.id, msg.guild.id, limit=3)
-        warns = db.get_warnings(m.id, msg.guild.id)
-        cfg = db.get_guild(msg.guild.id) or {}
+        warns   = db.get_warnings(m.id, msg.guild.id)
+        faction = db.get_user_faction_membership(m.id, msg.guild.id)
+        jobs    = db.get_user_jobs(m.id, msg.guild.id)
+        cfg     = db.get_guild(msg.guild.id) or {}
         color = BLURPLE
         if auto and auto.get('color'):
             try:
                 color = int(auto['color'].lstrip('#'), 16)
+            except Exception:
+                pass
+        elif faction and faction.get('faction_color'):
+            try:
+                color = int(faction['faction_color'].lstrip('#'), 16)
             except Exception:
                 pass
         e = discord.Embed(title=f'👤 Profil – {m.display_name}', color=color, timestamp=datetime.now())
@@ -197,13 +232,28 @@ class UserCog(commands.Cog):
         e.add_field(name='💰 Punkty', value=f'{u["points"]:.1f}', inline=True)
         e.add_field(name='⏱️ Godziny', value=f'{u["total_hours"]:.1f}h', inline=True)
         e.add_field(name='📅 Sesje', value=str(u['sessions_count']), inline=True)
+        if faction:
+            e.add_field(name='⚔️ Frakcja',
+                        value=f'{faction["faction_icon"]} **{faction["faction_name"]}**', inline=True)
+        if jobs:
+            job_str = ' | '.join(f'{j["icon"]} {j["name"]}' for j in jobs)
+            e.add_field(name='💼 Prace', value=job_str, inline=True)
+        if faction or jobs:
+            e.add_field(name='\u200b', value='\u200b', inline=True)  # spacer
         rank_lines = []
         if auto:
             rank_lines.append(f'🤖 {auto["icon"]} {auto["name"]}')
+        else:
+            rank_lines.append('🤖 Brak rangi (cywil)')
         for sr in specials:
             badge = '👑' if sr.get('is_owner_only') else '🎖️'
             rank_lines.append(f'{badge} {sr["icon"]} {sr["name"]}')
-        e.add_field(name='⭐ Rangi', value='\n'.join(rank_lines) or 'Brak', inline=False)
+        e.add_field(name='⭐ Rangi', value='\n'.join(rank_lines), inline=False)
+        if next_r:
+            from_pts = auto['required_points'] if auto else 0
+            bar = _prog_bar(u['points'], next_r['required_points'], from_pts)
+            e.add_field(name=f'Postęp → {next_r["icon"]} {next_r["name"]}',
+                        value=bar, inline=False)
         status = '🟢 Zalogowany' if u['is_clocked_in'] else '⚫ Niezalogowany'
         if u['is_banned']:
             status += ' | 🔨 Zablokowany na lb'
@@ -220,11 +270,8 @@ class UserCog(commands.Cog):
                 else:
                     lines.append(f'`{ci}` 🟢 aktywna')
             e.add_field(name='📅 Ostatnie sesje', value='\n'.join(lines), inline=False)
-        ranks = db.get_ranks(msg.guild.id, auto_only=True)
-        for r in ranks:
-            if r['required_points'] > u['points']:
-                e.set_footer(text=f'Do rangi {r["name"]}: {r["required_points"]-u["points"]:.1f} pkt')
-                break
+        if next_r:
+            e.set_footer(text=f'Do rangi {next_r["name"]}: {next_r["required_points"]-u["points"]:.1f} pkt')
         await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_clock(self, msg, args):
@@ -360,6 +407,32 @@ class UserCog(commands.Cog):
         if mgmt_lines:
             e.add_field(name='🔨 Admin – Zarządzanie', inline=False,
                         value='\n'.join(mgmt_lines))
+
+        faction_defs = [
+            ('createfaction',  '`.createfaction <n> [ikona] [#kolor] [opis]`'),
+            ('assignfaction',  '`.assignfaction @u <frakcja>`'),
+            ('removefaction',  '`.removefaction @u`'),
+            ('factions',       '`.factions`'),
+        ]
+        faction_lines = [s for cmd, s in faction_defs if _admin_perm(cmd)]
+        if faction_lines:
+            e.add_field(name='🔨 Admin – Frakcje', inline=False,
+                        value='\n'.join(faction_lines))
+
+        job_defs = [
+            ('createjob',     '`.createjob <n> <pkt> [ikona] [#kolor] [opis]`'),
+            ('deletejob',     '`.deletejob <nazwa>`'),
+            ('editjob',       '`.editjob <nazwa> <pole> <wartość>` – pola: name/points/icon/color/description/role'),
+            ('jobs',          '`.jobs` – lista prac'),
+            ('givejob',       '`.givejob @u <praca>` – nadaj pracę (bypass cywil)'),
+            ('takejob',       '`.takejob @u <praca>` – odbierz pracę'),
+            ('setjobchannel', '`.setjobchannel #ch` – kanał panelu pracy'),
+            ('jobpanel',      '`.jobpanel` – wyślij panel wyboru pracy'),
+        ]
+        job_lines = [s for cmd, s in job_defs if _admin_perm(cmd)]
+        if job_lines:
+            e.add_field(name='🔨 Admin – Prace', inline=False,
+                        value='\n'.join(job_lines))
 
         # panel is handled by PanelCog (no per-command DB entry by default)
         e.add_field(name='🔨 Admin – Panel', inline=False,

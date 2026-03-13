@@ -249,6 +249,37 @@
 </div>
 </form>
 
+{# ── MOPS Auto-Setup card ── #}
+<div class="card p-4 mt-4" style="border-color: var(--discord-yellow)">
+  <div class="row align-items-center g-3">
+    <div class="col-auto">
+      <span style="font-size:2.5rem">⚡</span>
+    </div>
+    <div class="col">
+      <h5 class="fw-bold text-warning mb-1">MOPS Auto-Setup</h5>
+      <p class="text-muted small mb-0">
+        Automatycznie utwórz <strong class="text-white">wszystkie role, kanały, frakcje, rangi i prace</strong>
+        dla serwera Baza MOPS – jeden klik konfiguruje cały serwer i wysyła panele interaktywne
+        (apel Clock In/Out + panel prac).
+      </p>
+    </div>
+    <div class="col-auto">
+      <a href="{{ url_for('setup_mops_page', guild_id=guild_id) }}"
+         class="btn btn-warning text-dark fw-bold px-4 py-2">
+        <i class="bi bi-lightning-charge-fill me-2"></i>⚡ Auto-Setup
+      </a>
+    </div>
+  </div>
+  <div class="mt-2 pt-2 border-top border-secondary">
+    <small class="text-muted">
+      <i class="bi bi-info-circle me-1"></i>
+      Tworzy: Król, Książę, Military Police, Alpha-1 (Gwardia), Nu-7 (wojsko),
+      Sierżant / Szeregowy / Drugi Szeregowy, prace cywilne (Farmer, Kowal, Kupiec, Rajca),
+      kanały głosowe Radio Alpha-1 / Nu-7 / Ogólne i Gabinet Króla.
+    </small>
+  </div>
+</div>
+
 <hr class="border-secondary my-4">
 
 <!-- Quick commands reference -->

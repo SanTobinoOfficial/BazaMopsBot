@@ -1,0 +1,332 @@
+{% extends 'base.html' %}
+{% block title %}Auto-Setup MOPS – {{ guild_name }}{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-4">
+  <a href="{{ url_for('config_page', guild_id=guild_id) }}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Konfiguracja
+  </a>
+  <h4 class="fw-bold mb-0"><i class="bi bi-lightning-charge me-2 text-warning"></i>MOPS Auto-Setup – {{ guild_name }}</h4>
+</div>
+
+{# ── Warning banner ── #}
+<div class="alert alert-warning d-flex gap-2 mb-4">
+  <i class="bi bi-exclamation-triangle-fill fs-5 flex-shrink-0 mt-1"></i>
+  <div>
+    <strong>Przed uruchomieniem upewnij się, że:</strong>
+    <ul class="mb-0 mt-1">
+      <li>Bot ma uprawnienia <strong>Zarządzaj Rolami</strong> i <strong>Zarządzaj Kanałami</strong></li>
+      <li>Rola bota jest <strong>wyżej niż role, które ma tworzyć</strong> w hierarchii serwera</li>
+      <li>Operacja może zająć ~40–60 sekund (limity Discord API)</li>
+      <li>Istniejące role i kanały <strong>zostaną zaktualizowane</strong> (kolor, uprawnienia, kategoria) – nie zduplikowane</li>
+    </ul>
+  </div>
+</div>
+
+<div class="row g-4 mb-4">
+
+  {# ── Hierarchy overview ── #}
+  <div class="col-12">
+    <div class="card p-3">
+      <div class="section-title"><i class="bi bi-diagram-3 me-1"></i>Hierarchia Bazy MOPS</div>
+      <div class="d-flex flex-wrap gap-1 align-items-center" style="font-size:.8rem">
+        <span class="badge py-2 px-3 fw-bold" style="background:#FFD700;color:#000">👑 Król</span>
+        <i class="bi bi-arrow-right text-muted"></i>
+        <span class="badge py-2 px-3 fw-bold" style="background:#FFA500;color:#000">👑 Książę</span>
+        <i class="bi bi-arrow-right text-muted"></i>
+        <span class="badge py-2 px-3 text-white" style="background:#B20000">🎖️ Generał</span>
+        <i class="bi bi-arrow-right text-muted"></i>
+        <div class="d-flex flex-column gap-1">
+          <span class="badge py-1 px-2 text-white" style="background:#FF0000">🎖️ Military Police (Alpha-1)</span>
+          <span class="badge py-1 px-2 text-white" style="background:#003399">🎖️ Generał Nu-7</span>
+        </div>
+        <i class="bi bi-arrow-right text-muted"></i>
+        <span class="badge py-2 px-3 text-white" style="background:#8B0000">⚔️ Kapitan</span>
+        <i class="bi bi-arrow-right text-muted"></i>
+        <span class="badge py-1 px-2 text-white" style="background:#7B7B00">🟡 Sierżant</span>
+        <i class="bi bi-arrow-right text-muted"></i>
+        <span class="badge py-1 px-2 text-white" style="background:#556B2F">🟢 Squad Leader</span>
+        <i class="bi bi-arrow-right text-muted"></i>
+        <span class="badge py-1 px-2 text-white" style="background:#708090">⚙️ Porucznik</span>
+        <i class="bi bi-arrow-right text-muted"></i>
+        <span class="badge py-1 px-2 text-white" style="background:#4682B4">🔷 Szeregowy</span>
+        <i class="bi bi-arrow-right text-muted"></i>
+        <span class="badge py-1 px-2 text-white" style="background:#2F4F4F">🔹 Rekrut</span>
+        <i class="bi bi-arrow-right text-muted"></i>
+        <span class="badge py-1 px-2" style="background:#99AAB5;color:#000">🧑 Cywil</span>
+      </div>
+      <small class="text-muted mt-2 d-block">
+        <i class="bi bi-info-circle me-1"></i>
+        Rangi wojskowe (<strong>Rekrut → Sierżant</strong>) są wspólne dla obu frakcji –
+        przynależność do <span style="color:#CC0000">Alpha-1</span> lub <span style="color:#0055FF">Nu-7</span>
+        jest wskazana przez rolę frakcji. <strong>Kapitan</strong> i wyżej – nadawane ręcznie przez admina.
+      </small>
+    </div>
+  </div>
+
+  {# ── Roles preview ── #}
+  <div class="col-lg-6">
+    <div class="card p-3 h-100">
+      <div class="section-title"><i class="bi bi-tag me-1"></i>Role Discord
+        <span class="badge bg-secondary ms-1">{{ mops_roles|length }}</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead><tr><th style="width:18px"></th><th>Nazwa</th><th>Uprawnienia Discord</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for role in mops_roles %}
+            <tr class="{% if role.name in existing_role_names %}opacity-50{% endif %}">
+              <td>
+                <span style="display:inline-block;width:14px;height:14px;border-radius:50%;
+                             background:{{ role.color | hex_color }};"></span>
+              </td>
+              <td class="text-white fw-semibold" style="font-size:.85rem">{{ role.name }}</td>
+              <td style="font-size:.72rem">
+                {% set p = role.perms %}
+                {% if p == 8 %}
+                  <span class="badge bg-danger bg-opacity-50 text-danger">👑 Administrator</span>
+                {% elif p > 0 %}
+                  {% if p & 2 %}<span class="badge bg-warning bg-opacity-20 text-warning me-1" style="font-size:.6rem">Kick</span>{% endif %}
+                  {% if p & 4 %}<span class="badge bg-warning bg-opacity-20 text-warning me-1" style="font-size:.6rem">Ban</span>{% endif %}
+                  {% if p & 8192 %}<span class="badge bg-info bg-opacity-20 text-info me-1" style="font-size:.6rem">Manage Msg</span>{% endif %}
+                  {% if p & 4194304 %}<span class="badge bg-secondary me-1" style="font-size:.6rem">Mute</span>{% endif %}
+                  {% if p & 16777216 %}<span class="badge bg-secondary me-1" style="font-size:.6rem">Move</span>{% endif %}
+                  {% if p & 256 %}<span class="badge bg-secondary me-1" style="font-size:.6rem">Priority</span>{% endif %}
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if role.name in existing_role_names %}
+                  <span class="badge bg-secondary" style="font-size:.65rem">⏭️ istnieje</span>
+                {% else %}
+                  <span class="badge bg-success bg-opacity-25 text-success" style="font-size:.65rem">✅ tworzona</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# ── Channels preview ── #}
+  <div class="col-lg-6">
+    <div class="card p-3 h-100">
+      <div class="section-title"><i class="bi bi-hash me-1"></i>Kanały i kategorie</div>
+      {% for cat_name, channels_list in mops_channels %}
+      <div class="mb-3">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <i class="bi bi-folder2 text-warning" style="font-size:.8rem"></i>
+          <span class="text-warning fw-semibold" style="font-size:.82rem;text-transform:uppercase;letter-spacing:.04em">{{ cat_name }}</span>
+          {% if cat_name in existing_ch_names %}<span class="badge bg-secondary" style="font-size:.6rem">istnieje</span>{% endif %}
+        </div>
+        {% for ch_name, ch_type in channels_list %}
+        <div class="d-flex align-items-center gap-2 ms-3 mb-1 {% if ch_name in existing_ch_names %}opacity-50{% endif %}">
+          {% if ch_type == 2 %}
+            <i class="bi bi-volume-up text-muted" style="font-size:.78rem"></i>
+            <span class="text-white" style="font-size:.83rem">{{ ch_name }}</span>
+            <span class="badge bg-info bg-opacity-25 text-info" style="font-size:.6rem">voice</span>
+          {% else %}
+            <i class="bi bi-hash text-muted" style="font-size:.78rem"></i>
+            <span class="text-white" style="font-size:.83rem">{{ ch_name }}</span>
+            {% if ch_name in ('apel','panel','prace') %}
+              <span class="badge" style="font-size:.58rem;background:rgba(114,137,218,.3);color:#7289da">bot</span>
+            {% elif ch_name in ('logi','admin-panel','ostrzeżenia') %}
+              <span class="badge" style="font-size:.58rem;background:rgba(244,67,54,.2);color:#f04747">🔒 admin</span>
+            {% elif ch_name in ('alpha-1-czat',) %}
+              <span class="badge" style="font-size:.58rem;background:rgba(204,0,0,.2);color:#CC0000">Alpha-1</span>
+            {% elif ch_name in ('nu-7-czat',) %}
+              <span class="badge" style="font-size:.58rem;background:rgba(0,85,255,.2);color:#0055FF">Nu-7</span>
+            {% elif ch_name in ('rozkazy','raporty','planowanie','wojsko-ogólne') %}
+              <span class="badge" style="font-size:.58rem;background:rgba(139,0,0,.2);color:#cc6666">wojsko</span>
+            {% endif %}
+          {% endif %}
+          {% if ch_name in existing_ch_names %}<span class="badge bg-secondary" style="font-size:.58rem">istnieje</span>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# ── Permissions overview ── #}
+  <div class="col-12">
+    <div class="card p-3">
+      <div class="section-title"><i class="bi bi-shield-lock me-1"></i>Uprawnienia kanałów (automatycznie konfigurowane)</div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0" style="font-size:.8rem">
+          <thead>
+            <tr>
+              <th style="width:160px">Kanał</th>
+              <th>Kto może czytać / dołączyć</th>
+              <th style="width:200px">Kto może pisać / wysyłać</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% set perm_table = [
+              ('📢 #ogłoszenia',    'Wszyscy',                      'Król, Książę, Generał, Military Police'),
+              ('📰 #aktualności',   'Wszyscy',                      'Król, Książę, Generał, Military Police'),
+              ('📜 #regulamin',     'Wszyscy',                      '— (read-only)'),
+              ('👋 #witaj',         'Wszyscy',                      '— (read-only)'),
+              ('💬 #ogólny',        'Wszyscy',                      'Wszyscy'),
+              ('👨‍👩‍👦 #cywile',  'Wszyscy',                      'Wszyscy'),
+              ('🛒 #market',        'Wszyscy',                      'Wszyscy'),
+              ('💬 #off-topic',     'Wszyscy',                      'Wszyscy'),
+              ('🤖 #komendy-bota',  'Wszyscy',                      'Wszyscy'),
+              ('📋 #apel',          'Wszyscy',                      '— (tylko bot; admini mogą zarządzać)'),
+              ('📌 #panel',         'Wszyscy',                      '— (tylko bot; admini mogą zarządzać)'),
+              ('💼 #prace',         'Wszyscy',                      '— (tylko bot; admini mogą zarządzać)'),
+              ('🔒 #admin-panel',   'Admini (Generał, MP, A1, Nu-7)',   'Admini'),
+              ('📝 #logi',          'Admini (Generał, MP, A1, Nu-7)',   'Admini (bot pisze automatycznie)'),
+              ('⚠️ #ostrzeżenia',   'Admini (Generał, MP, A1, Nu-7)',   'Admini'),
+              ('⚔️ #wojsko-ogólne', 'Wszyscy wojskowi (Rekrut+)',   'Wszyscy wojskowi'),
+              ('📋 #rozkazy',       'Wszyscy wojskowi',             'Oficerowie (Sierżant+)'),
+              ('📄 #raporty',       'Wszyscy wojskowi',             'Wszyscy wojskowi'),
+              ('🔴 #alpha-1-czat',  'Alpha-1 + dowódcy',            'Alpha-1 + dowódcy'),
+              ('🔵 #nu-7-czat',     'Nu-7 + dowódcy',               'Nu-7 + dowódcy'),
+              ('🗺️ #planowanie',    'Oficerowie (Porucznik+)',       'Oficerowie (Porucznik+)'),
+              ('🔊 Radio Ogólne',   'Wszyscy',                      '—'),
+              ('🔊 Radio Alpha-1',  'Alpha-1 + dowódcy',            '—'),
+              ('🔊 Radio Nu-7',     'Nu-7 + dowódcy',               '—'),
+              ('👑 Gabinet Króla',  'Król, Książę, Generał, Military Police', '—'),
+            ] %}
+            {% for ch, read, write in perm_table %}
+            <tr>
+              <td class="text-white fw-semibold">{{ ch }}</td>
+              <td class="text-muted">{{ read }}</td>
+              <td class="text-muted">{{ write }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# ── Factions + Ranks preview ── #}
+  <div class="col-lg-6">
+    <div class="card p-3 h-100">
+      <div class="section-title"><i class="bi bi-shield-shaded me-1"></i>Frakcje i rangi</div>
+
+      {# Special ranks #}
+      <div class="mb-3">
+        <div class="fw-semibold text-white mb-2" style="font-size:.85rem">👑 Rangi specjalne (admin-only)</div>
+        {% for r in mops_special_ranks %}
+        <div class="d-flex align-items-center gap-2 ms-2 mb-1">
+          <span>{{ r.icon }}</span>
+          <span class="text-white" style="font-size:.83rem">{{ r.name }}</span>
+          <span class="badge bg-warning bg-opacity-25 text-warning" style="font-size:.6rem">owner-only</span>
+        </div>
+        {% endfor %}
+      </div>
+
+      {# Alpha-1 #}
+      <div class="mb-3">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <span>🔴</span>
+          <span class="fw-semibold text-danger" style="font-size:.85rem">Alpha-1 – Gwardia Królewska</span>
+          {% if 'Alpha-1' in existing_fac_names %}<span class="badge bg-secondary" style="font-size:.6rem">istnieje</span>{% endif %}
+        </div>
+        {% for r in mops_faction_ranks if r.faction == 'Alpha-1' %}
+        <div class="d-flex align-items-center gap-2 ms-3 mb-1">
+          <span>{{ r.icon }}</span>
+          <span class="text-white" style="font-size:.83rem">{{ r.name }}</span>
+          {% if r.pts > 0 %}<span class="badge bg-secondary bg-opacity-50" style="font-size:.6rem">{{ r.pts }} pkt</span>{% endif %}
+          {% if r.owner_only %}<span class="badge bg-warning bg-opacity-25 text-warning" style="font-size:.58rem">admin</span>{% endif %}
+          <span class="text-muted" style="font-size:.72rem">→ rola: {{ r.role }}</span>
+        </div>
+        {% endfor %}
+      </div>
+
+      {# Nu-7 #}
+      <div>
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <span>🔵</span>
+          <span class="fw-semibold text-primary" style="font-size:.85rem">Nu-7 – Jednostka wojskowa</span>
+          {% if 'Nu-7' in existing_fac_names %}<span class="badge bg-secondary" style="font-size:.6rem">istnieje</span>{% endif %}
+        </div>
+        {% for r in mops_faction_ranks if r.faction == 'Nu-7' %}
+        <div class="d-flex align-items-center gap-2 ms-3 mb-1">
+          <span>{{ r.icon }}</span>
+          <span class="text-white" style="font-size:.83rem">{{ r.name }}</span>
+          {% if r.pts > 0 %}<span class="badge bg-secondary bg-opacity-50" style="font-size:.6rem">{{ r.pts }} pkt</span>{% endif %}
+          {% if r.owner_only %}<span class="badge bg-warning bg-opacity-25 text-warning" style="font-size:.58rem">admin</span>{% endif %}
+          <span class="text-muted" style="font-size:.72rem">→ rola: {{ r.role }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  {# ── Jobs preview ── #}
+  <div class="col-lg-6">
+    <div class="card p-3 h-100">
+      <div class="section-title"><i class="bi bi-briefcase me-1"></i>Prace cywilne
+        <span class="badge bg-secondary ms-1">{{ mops_jobs|length }}</span>
+      </div>
+      <p class="text-muted small mb-3">Dostępne dla cywilów (bez frakcji) po osiągnięciu progu punktowego.</p>
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Praca</th><th>Pkt</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for job in mops_jobs %}
+          <tr class="{% if job.name in existing_job_names %}opacity-50{% endif %}">
+            <td>
+              <span class="me-1">{{ job.icon }}</span>
+              <span class="text-white">{{ job.name }}</span>
+              <div class="text-muted" style="font-size:.72rem">{{ job.description }}</div>
+            </td>
+            <td>
+              <span class="badge" style="background:{{ job.color }}22;color:{{ job.color }};border:1px solid {{ job.color }}44">
+                {{ job.pts }}
+              </span>
+            </td>
+            <td>
+              {% if job.name in existing_job_names %}
+                <span class="badge bg-secondary" style="font-size:.65rem">⏭️ istnieje</span>
+              {% else %}
+                <span class="badge bg-success bg-opacity-25 text-success" style="font-size:.65rem">✅ tworzona</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+{# ── Run button ── #}
+<div class="card p-4" style="border-color:#faa61a">
+  <div class="d-flex align-items-start gap-3">
+    <i class="bi bi-lightning-charge-fill text-warning fs-3 flex-shrink-0"></i>
+    <div class="flex-grow-1">
+      <h5 class="text-white mb-1">Uruchomić Auto-Setup?</h5>
+      <p class="text-muted small mb-3">
+        Zostanie stworzonych <strong class="text-white">{{ mops_roles|length }} ról</strong>,
+        <strong class="text-white">{{ mops_channels|map(attribute=1)|map('length')|sum }} kanałów</strong>
+        w <strong class="text-white">{{ mops_channels|length }} kategoriach</strong>
+        z <strong class="text-white">uprawnieniami</strong>,
+        <strong class="text-white">2 frakcje</strong>,
+        <strong class="text-white">{{ mops_special_ranks|length + mops_faction_ranks|length }} rang</strong>
+        ({{ mops_special_ranks|length }} specjalnych + {{ mops_faction_ranks|length }} frakcyjnych),
+        <strong class="text-white">{{ mops_jobs|length }} prac</strong>,
+        wysłane <strong class="text-white">2 panele</strong> interaktywne
+        oraz <strong class="text-warning">auto-połączenie</strong> wszystkich rang z rolami Discord.
+      </p>
+      <form method="POST" action="{{ url_for('setup_mops_run', guild_id=guild_id) }}"
+            onsubmit="this.querySelector('button[type=submit]').disabled=true;
+                      this.querySelector('button[type=submit]').innerHTML=
+                        '<span class=\'spinner-border spinner-border-sm me-2\'></span>Trwa setup… (~50 sek)';">
+        <button type="submit" class="btn btn-warning text-dark fw-bold px-4">
+          <i class="bi bi-lightning-charge-fill me-2"></i>⚡ Uruchom Auto-Setup
+        </button>
+        <a href="{{ url_for('config_page', guild_id=guild_id) }}"
+           class="btn btn-outline-secondary ms-2">Anuluj</a>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

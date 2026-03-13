@@ -9,12 +9,23 @@ import database as db
 # ─── Session embed helpers ────────────────────────────────────────────────────
 
 def _faction_icon(guild: discord.Guild, member: discord.Member, guild_id: int) -> str:
-    """Return '<icon> ' for the user's faction or empty string."""
+    """Return '<icon> ' for the user's faction (explicit membership) or empty string."""
     if not member:
         return ''
-    role_ids = [r.id for r in member.roles]
-    f = db.get_user_faction(guild_id, role_ids)
-    return f'{f["icon"]} ' if f else ''
+    f = db.get_user_faction_membership(member.id, guild_id)
+    return f'{f["faction_icon"]} ' if f else ''
+
+
+def _prog_bar(current: float, next_pts: float, from_pts: float = 0,
+              width: int = 10) -> str:
+    """ASCII progress bar: '████░░░░░░ 30/50 pkt'"""
+    span = next_pts - from_pts
+    if span <= 0:
+        filled = width
+    else:
+        filled = int(min(width, max(0, round((current - from_pts) / span * width))))
+    bar = '█' * filled + '░' * (width - filled)
+    return f'`{bar}` {current:.0f}/{next_pts:.0f} pkt'
 
 
 async def _build_session_embed(guild: discord.Guild, cfg: dict,
@@ -386,7 +397,15 @@ class SessionClockView(ui.View):
             e.add_field(name='⭐ Ranga',     value=_rank_line(uid, gid), inline=True)
             if streak > 1:
                 e.add_field(name='🔥 Seria', value=f'{streak} dni z rzędu!', inline=True)
+            # Progress bar to next rank
             if fresh:
+                next_r = db.get_user_next_rank(uid, gid)
+                if next_r:
+                    cur_rank = db.get_user_auto_rank(uid, gid)
+                    from_pts = cur_rank['required_points'] if cur_rank else 0
+                    bar = _prog_bar(fresh['points'], next_r['required_points'], from_pts)
+                    e.add_field(name=f'Postęp → {next_r["icon"]} {next_r["name"]}',
+                                value=bar, inline=False)
                 e.set_footer(text=f'Łączne punkty: {fresh["points"]:.1f} pkt')
             await interaction.followup.send(embed=e, ephemeral=True)
 
@@ -535,6 +554,13 @@ class ClockView(ui.View):
         if streak > 1:
             e.add_field(name='🔥 Seria', value=f'{streak} dni z rzędu!', inline=True)
         if fresh_user:
+            next_r = db.get_user_next_rank(uid, gid)
+            if next_r:
+                cur_rank = db.get_user_auto_rank(uid, gid)
+                from_pts = cur_rank['required_points'] if cur_rank else 0
+                bar = _prog_bar(fresh_user['points'], next_r['required_points'], from_pts)
+                e.add_field(name=f'Postęp → {next_r["icon"]} {next_r["name"]}',
+                            value=bar, inline=False)
             e.set_footer(text=f'Łączne punkty: {fresh_user["points"]:.1f} pkt')
         await interaction.followup.send(embed=e, ephemeral=True)
 
@@ -562,14 +588,9 @@ class ClockView(ui.View):
 async def _check_rank_up(interaction: discord.Interaction,
                           uid: int, gid: int,
                           pts_before: float, pts_after: float):
-    ranks_auto = db.get_ranks(gid, auto_only=True)
-    rank_before, rank_after = None, None
-    for r in ranks_auto:
-        if r['required_points'] <= pts_before:
-            rank_before = r
-    for r in ranks_auto:
-        if r['required_points'] <= pts_after:
-            rank_after = r
+    # Use faction-aware rank lookup with points_override
+    rank_before = db.get_user_auto_rank(uid, gid, points_override=pts_before)
+    rank_after  = db.get_user_auto_rank(uid, gid, points_override=pts_after)
 
     if rank_after and (not rank_before or rank_after['id'] != rank_before['id']):
         try:
@@ -587,6 +608,13 @@ async def _check_rank_up(interaction: discord.Interaction,
                          f'**{rank_after["icon"]} {rank_after["name"]}**!'),
             color=color)
         e.set_thumbnail(url=interaction.user.display_avatar.url)
+        # Add progress bar to next rank if available
+        next_r = db.get_user_next_rank(uid, gid)
+        if next_r:
+            bar = _prog_bar(pts_after, next_r['required_points'],
+                            rank_after['required_points'])
+            e.add_field(name=f'Do {next_r["icon"]} {next_r["name"]}',
+                        value=bar, inline=False)
         e.set_footer(text=f'Punkty: {pts_after:.1f}')
 
         cfg = db.get_guild(gid)
@@ -640,9 +668,8 @@ async def _check_rank_up(interaction: discord.Interaction,
 
 async def _check_near_rank_dm(interaction: discord.Interaction,
                                uid: int, gid: int, pts: float):
-    """Send DM when user is within 10% of the next rank."""
-    ranks = db.get_ranks(gid, auto_only=True)
-    next_rank = next((r for r in ranks if r['required_points'] > pts), None)
+    """Send DM when user is within 10% of the next rank (faction-aware)."""
+    next_rank = db.get_user_next_rank(uid, gid)
     if not next_rank:
         return
     needed = next_rank['required_points'] - pts
@@ -651,10 +678,14 @@ async def _check_near_rank_dm(interaction: discord.Interaction,
         member = interaction.guild.get_member(uid)
         if member:
             try:
+                cur_rank = db.get_user_auto_rank(uid, gid)
+                from_pts = cur_rank['required_points'] if cur_rank else 0
+                bar = _prog_bar(pts, next_rank['required_points'], from_pts)
                 await member.send(embed=discord.Embed(
                     title='⭐ Blisko nowej rangi!',
                     description=(f'Brakuje Ci tylko **{needed:.1f} pkt** do rangi\n'
                                  f'**{next_rank["icon"]} {next_rank["name"]}**!\n\n'
+                                 f'{bar}\n\n'
                                  f'*Kontynuuj aktywność na **{interaction.guild.name}**!*'),
                     color=YELLOW))
             except Exception:

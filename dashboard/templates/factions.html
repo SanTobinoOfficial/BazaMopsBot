@@ -45,22 +45,23 @@
         <p class="text-muted small mb-2">{{ f.description }}</p>
         {% endif %}
 
-        {% set f_roles = f.role_ids | tojson | replace('"','') | replace('[','') | replace(']','') %}
-        {% set role_id_list = f.role_ids | from_json if f.role_ids else [] %}
+        {# ── Members ── #}
+        {% set members = faction_members.get(f.id, []) %}
         <div class="mb-2">
-          <small class="text-muted text-uppercase" style="font-size:.7rem;letter-spacing:.05em;">Role</small><br>
-          {% set matched = [] %}
-          {% for r in guild_roles %}
-            {% if r.id | int in role_id_list %}
-              {% set _ = matched.append(r) %}
-            {% endif %}
-          {% endfor %}
-          {% if matched %}
-            {% for r in matched %}
-            <span class="badge bg-secondary me-1">{{ r.name }}</span>
-            {% endfor %}
+          <small class="text-muted text-uppercase" style="font-size:.7rem;letter-spacing:.05em;">
+            Członkowie ({{ members | length }})
+          </small><br>
+          {% if members %}
+            <div class="mt-1" style="max-height:110px;overflow-y:auto">
+              {% for mem in members %}
+              <div class="d-flex justify-content-between align-items-center py-1 border-bottom border-secondary" style="font-size:.82rem">
+                <span class="text-white">{{ mem.display_name }}</span>
+                <span class="text-muted">{{ mem.points | round(0) | int }} pkt</span>
+              </div>
+              {% endfor %}
+            </div>
           {% else %}
-            <span class="text-muted small">Brak przypisanych ról</span>
+            <span class="text-muted small">Brak członków</span>
           {% endif %}
         </div>
 

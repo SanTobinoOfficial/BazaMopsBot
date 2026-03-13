@@ -93,6 +93,12 @@
       </a>
     </li>
     <li class="nav-item">
+      <a class="nav-link {% if request.endpoint == 'jobs_page' %}active{% endif %}"
+         href="{{ url_for('jobs_page', guild_id=guild_id) }}">
+        <i class="bi bi-briefcase me-2"></i>Prace
+      </a>
+    </li>
+    <li class="nav-item">
       <a class="nav-link {% if request.endpoint == 'config_page' %}active{% endif %}"
          href="{{ url_for('config_page', guild_id=guild_id) }}">
         <i class="bi bi-gear me-2"></i>Konfiguracja

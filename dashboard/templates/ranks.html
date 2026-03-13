@@ -1,5 +1,93 @@
 {% extends 'base.html' %}
 {% block title %}Rangi – {{ guild_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ── Role list styles ──────────────────────────────────────────── */
+.role-dot {
+    width: 13px; height: 13px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+    box-shadow: 0 0 5px rgba(0,0,0,.5);
+}
+
+.rank-category-sep {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 18px 0 6px;
+    color: #72767d;
+    font-size: .72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+}
+.rank-category-sep::before,
+.rank-category-sep::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(255,255,255,.08);
+}
+
+.rank-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border-left: 3px solid transparent;
+    transition: background .12s;
+    margin-bottom: 3px;
+}
+.rank-row:hover { background: rgba(255,255,255,.04); }
+
+.rank-name { font-weight: 600; color: #fff; font-size: .93rem; flex-shrink: 0; }
+.rank-badge-pts {
+    background: rgba(114,137,218,.2);
+    color: #7289da;
+    border: 1px solid rgba(114,137,218,.35);
+    font-size: .72rem;
+    padding: 1px 7px;
+    border-radius: 20px;
+    flex-shrink: 0;
+}
+.rank-badge-cat {
+    background: rgba(255,255,255,.08);
+    color: #b9bbbe;
+    font-size: .68rem;
+    padding: 1px 7px;
+    border-radius: 20px;
+    flex-shrink: 0;
+}
+.rank-role-pill {
+    background: rgba(0,0,0,.3);
+    border: 1px solid rgba(255,255,255,.1);
+    color: #8e9297;
+    font-size: .68rem;
+    padding: 1px 7px;
+    border-radius: 20px;
+    flex-shrink: 0;
+}
+.rank-spacer { flex: 1; }
+.rank-actions { display: flex; gap: 4px; flex-shrink: 0; }
+
+/* Faction row */
+.faction-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 6px;
+    border-left: 3px solid transparent;
+    margin-bottom: 3px;
+    transition: background .12s;
+}
+.faction-row:hover { background: rgba(255,255,255,.04); }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h4 class="fw-bold mb-0"><i class="bi bi-star me-2"></i>Rangi – {{ guild_name }}</h4>
@@ -8,88 +96,106 @@
   </button>
 </div>
 
-<!-- Auto ranks -->
-<div class="card mb-4">
-  <div class="p-3 border-bottom border-secondary">
-    <span class="section-title mb-0">🤖 Rangi automatyczne (za punkty)</span>
-  </div>
-  {% set auto_ranks = ranks | selectattr('is_special', 'equalto', 0) | list %}
-  {% if auto_ranks %}
-  <div class="table-responsive">
-    <table class="table table-hover mb-0">
-      <thead><tr><th>Ikona & Nazwa</th><th>Wymagane punkty</th><th>Rola Discord</th><th>Kolor</th><th>Opis</th><th>Akcje</th></tr></thead>
-      <tbody>
-      {% for r in auto_ranks %}
-      <tr>
-        <td>
-          <span class="fw-semibold text-white">{{ r.icon }} {{ r.name }}</span>
-        </td>
-        <td><span class="badge points-badge">{{ r.required_points | round(0) | int }} pkt</span></td>
-        <td class="text-muted small">{{ r.role_id or '—' }}</td>
-        <td>
-          <span class="badge" style="background:{{ r.color }};color:#fff">{{ r.color }}</span>
-        </td>
-        <td class="text-muted small">{{ r.description or '—' }}</td>
-        <td>
-          <button class="btn btn-sm btn-outline-secondary"
-                  onclick='editRank({{ r | tojson }})'>
-            <i class="bi bi-pencil"></i>
-          </button>
-          <form method="POST" action="{{ url_for('delete_rank_action', guild_id=guild_id, rank_id=r.id) }}"
-                style="display:inline" onsubmit="return confirm('Usunąć rangę {{ r.name }}?')">
-            <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
+<div class="card p-3">
+
+  {% if grouped_ranks %}
+    {% for cat_name, cat_ranks in grouped_ranks.items() %}
+
+    {# ── Category separator ── #}
+    <div class="rank-category-sep"><span>{{ cat_name }}</span></div>
+
+    {% for r in cat_ranks %}
+    <div class="rank-row" style="border-left-color: {{ r.color }}; background: rgba(0,0,0,.15)">
+      {# Colored dot #}
+      <span class="role-dot" style="background: {{ r.color }}"></span>
+
+      {# Icon + name #}
+      <span class="rank-name">{{ r.icon }} {{ r.name }}</span>
+
+      {# Points badge (auto ranks only) #}
+      {% if not r.is_special %}
+        <span class="rank-badge-pts">{{ r.required_points | int }} pkt</span>
+      {% endif %}
+
+      {# Unit crown #}
+      {% if r.is_owner_only %}
+        <span class="rank-badge-cat">👑 UNIT</span>
+      {% elif r.is_special %}
+        <span class="rank-badge-cat">🎖️ SPECIAL</span>
+      {% endif %}
+
+      {# Faction badge #}
+      {% if r.faction_id %}
+        {% for f in factions if f.id == r.faction_id %}
+          <span class="rank-badge-cat" style="border-color:{{ f.color }};color:{{ f.color }}">
+            ⚔️ {{ f.name }}
+          </span>
+        {% endfor %}
+      {% endif %}
+
+      {# Description #}
+      {% if r.description %}
+        <span class="text-muted" style="font-size:.78rem">{{ r.description }}</span>
+      {% endif %}
+
+      <span class="rank-spacer"></span>
+
+      {# Discord role pill #}
+      {% if r.role_id %}
+        <span class="rank-role-pill">
+          <i class="bi bi-discord me-1"></i>{{ role_map.get(r.role_id | string, 'ID:' ~ r.role_id) }}
+        </span>
+      {% endif %}
+
+      {# Actions #}
+      <div class="rank-actions">
+        <button class="btn btn-sm btn-outline-secondary" onclick='editRank({{ r | tojson }})'>
+          <i class="bi bi-pencil"></i>
+        </button>
+        <form method="POST"
+              action="{{ url_for('delete_rank_action', guild_id=guild_id, rank_id=r.id) }}"
+              style="display:inline"
+              onsubmit="return confirm('Usunąć rangę {{ r.name }}?')">
+          <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+
+    {% endfor %}
   {% else %}
-  <p class="text-muted p-3 mb-0">Brak rang automatycznych. Utwórz pierwszą!</p>
+    <p class="text-muted mb-0">Brak rang. Utwórz pierwszą klikając „Nowa ranga"!</p>
   {% endif %}
+
+  {# ── Factions section ── #}
+  {% if factions %}
+    <div class="rank-category-sep mt-3"><span>⚔️ Frakcje</span></div>
+
+    {% for f in factions %}
+    <div class="faction-row" style="border-left-color: {{ f.color }}; background: rgba(0,0,0,.15)">
+      <span class="role-dot" style="background: {{ f.color }}"></span>
+      <span class="rank-name">{{ f.icon }} {{ f.name }}</span>
+      {% if f.description %}
+        <span class="text-muted" style="font-size:.78rem">{{ f.description }}</span>
+      {% endif %}
+      <span class="rank-spacer"></span>
+      {# Show role count #}
+      {% set role_ids = f.role_ids | from_json %}
+      {% if role_ids %}
+        <span class="rank-role-pill">{{ role_ids | length }} rol(e)</span>
+      {% endif %}
+      <a href="{{ url_for('factions_page', guild_id=guild_id) }}"
+         class="btn btn-sm btn-outline-secondary ms-1">
+        <i class="bi bi-pencil"></i>
+      </a>
+    </div>
+    {% endfor %}
+  {% endif %}
+
 </div>
 
-<!-- Special ranks -->
-<div class="card">
-  <div class="p-3 border-bottom border-secondary">
-    <span class="section-title mb-0">🎖️ Rangi specjalne (tylko admin)</span>
-  </div>
-  {% set special_ranks = ranks | selectattr('is_special', 'equalto', 1) | list %}
-  {% if special_ranks %}
-  <div class="table-responsive">
-    <table class="table table-hover mb-0">
-      <thead><tr><th>Ikona & Nazwa</th><th>Rola Discord</th><th>Kolor</th><th>Opis</th><th>Akcje</th></tr></thead>
-      <tbody>
-      {% for r in special_ranks %}
-      <tr>
-        <td><span class="fw-semibold text-white">{{ r.icon }} {{ r.name }}</span></td>
-        <td class="text-muted small">{{ r.role_id or '—' }}</td>
-        <td>
-          <span class="badge" style="background:{{ r.color }};color:#fff">{{ r.color }}</span>
-        </td>
-        <td class="text-muted small">{{ r.description or '—' }}</td>
-        <td>
-          <button class="btn btn-sm btn-outline-secondary"
-                  onclick='editRank({{ r | tojson }})'>
-            <i class="bi bi-pencil"></i>
-          </button>
-          <form method="POST" action="{{ url_for('delete_rank_action', guild_id=guild_id, rank_id=r.id) }}"
-                style="display:inline" onsubmit="return confirm('Usunąć rangę {{ r.name }}?')">
-            <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <p class="text-muted p-3 mb-0">Brak rang specjalnych.</p>
-  {% endif %}
-</div>
 
-<!-- Create Modal -->
+{# ─────────────────────── Create Modal ─────────────────────────── #}
 <div class="modal fade" id="createRankModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content bg-dark border-secondary">
@@ -99,10 +205,18 @@
       </div>
       <form method="POST" action="{{ url_for('create_rank_action', guild_id=guild_id) }}">
       <div class="modal-body">
-        <div class="mb-3">
-          <label class="form-label text-muted small">Nazwa rangi *</label>
-          <input type="text" name="name" class="form-control bg-dark border-secondary text-white" required>
+
+        <div class="row g-2 mb-3">
+          <div class="col-8">
+            <label class="form-label text-muted small">Nazwa rangi *</label>
+            <input type="text" name="name" class="form-control bg-dark border-secondary text-white" required>
+          </div>
+          <div class="col-4">
+            <label class="form-label text-muted small">Ikona</label>
+            <input type="text" name="icon" class="form-control bg-dark border-secondary text-white" value="⭐">
+          </div>
         </div>
+
         <div class="mb-3">
           <label class="form-label text-muted small">Typ rangi</label>
           <select name="is_special" id="rankTypeSelect" class="form-select bg-dark border-secondary text-white"
@@ -111,22 +225,38 @@
             <option value="1">🎖️ Specjalna (tylko admin)</option>
           </select>
         </div>
+
         <div class="mb-3" id="pointsField">
           <label class="form-label text-muted small">Wymagane punkty</label>
           <input type="number" name="required_points" class="form-control bg-dark border-secondary text-white"
                  value="0" step="1" min="0">
         </div>
+
+        <div class="row g-2 mb-3">
+          <div class="col-6">
+            <label class="form-label text-muted small">Kategoria (opcjonalna)</label>
+            <input type="text" name="category" class="form-control bg-dark border-secondary text-white"
+                   placeholder="np. DEPARTMENT, AWARDS…">
+          </div>
+          <div class="col-6">
+            <label class="form-label text-muted small">⚔️ Frakcja (opcjonalna)</label>
+            <select name="faction_id" class="form-select bg-dark border-secondary text-white">
+              <option value="">Brak (cywilna)</option>
+              {% for f in factions %}
+              <option value="{{ f.id }}">{{ f.icon }} {{ f.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
         <div class="row g-2 mb-3">
           <div class="col-4">
-            <label class="form-label text-muted small">Ikona</label>
-            <input type="text" name="icon" class="form-control bg-dark border-secondary text-white" value="⭐">
+            <label class="form-label text-muted small">Kolor</label>
+            <input type="color" name="color" class="form-control form-control-color bg-dark border-secondary w-100"
+                   value="#7289da">
           </div>
-          <div class="col-4">
-            <label class="form-label text-muted small">Kolor (hex)</label>
-            <input type="color" name="color" class="form-control form-control-color bg-dark border-secondary w-100" value="#7289da">
-          </div>
-          <div class="col-4">
-            <label class="form-label text-muted small">Rola Discord ID</label>
+          <div class="col-8">
+            <label class="form-label text-muted small">Rola Discord</label>
             <select name="role_id" class="form-select bg-dark border-secondary text-white">
               <option value="">Brak</option>
               {% for role in guild_roles %}
@@ -137,10 +267,13 @@
             </select>
           </div>
         </div>
+
         <div class="mb-3">
           <label class="form-label text-muted small">Opis (opcjonalny)</label>
-          <input type="text" name="description" class="form-control bg-dark border-secondary text-white">
+          <input type="text" name="description" class="form-control bg-dark border-secondary text-white"
+                 placeholder="Krótki opis rangi">
         </div>
+
       </div>
       <div class="modal-footer border-secondary">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Anuluj</button>
@@ -151,7 +284,8 @@
   </div>
 </div>
 
-<!-- Edit Modal -->
+
+{# ─────────────────────── Edit Modal ───────────────────────────── #}
 <div class="modal fade" id="editRankModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content bg-dark border-secondary">
@@ -161,27 +295,55 @@
       </div>
       <form method="POST" id="editRankForm">
       <div class="modal-body">
-        <div class="mb-3">
-          <label class="form-label text-muted small">Nazwa rangi *</label>
-          <input type="text" name="name" id="editName" class="form-control bg-dark border-secondary text-white" required>
+
+        <div class="row g-2 mb-3">
+          <div class="col-8">
+            <label class="form-label text-muted small">Nazwa rangi *</label>
+            <input type="text" name="name" id="editName"
+                   class="form-control bg-dark border-secondary text-white" required>
+          </div>
+          <div class="col-4">
+            <label class="form-label text-muted small">Ikona</label>
+            <input type="text" name="icon" id="editIcon"
+                   class="form-control bg-dark border-secondary text-white">
+          </div>
         </div>
+
         <div class="mb-3" id="editPointsField">
           <label class="form-label text-muted small">Wymagane punkty</label>
           <input type="number" name="required_points" id="editPoints"
                  class="form-control bg-dark border-secondary text-white" step="1" min="0">
         </div>
+
+        <div class="row g-2 mb-3">
+          <div class="col-6">
+            <label class="form-label text-muted small">Kategoria (opcjonalna)</label>
+            <input type="text" name="category" id="editCategory"
+                   class="form-control bg-dark border-secondary text-white"
+                   placeholder="np. DEPARTMENT, AWARDS…">
+          </div>
+          <div class="col-6">
+            <label class="form-label text-muted small">⚔️ Frakcja</label>
+            <select name="faction_id" id="editFaction"
+                    class="form-select bg-dark border-secondary text-white">
+              <option value="">Brak (cywilna)</option>
+              {% for f in factions %}
+              <option value="{{ f.id }}">{{ f.icon }} {{ f.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
         <div class="row g-2 mb-3">
           <div class="col-4">
-            <label class="form-label text-muted small">Ikona</label>
-            <input type="text" name="icon" id="editIcon" class="form-control bg-dark border-secondary text-white">
-          </div>
-          <div class="col-4">
             <label class="form-label text-muted small">Kolor</label>
-            <input type="color" name="color" id="editColor" class="form-control form-control-color bg-dark border-secondary w-100">
+            <input type="color" name="color" id="editColor"
+                   class="form-control form-control-color bg-dark border-secondary w-100">
           </div>
-          <div class="col-4">
+          <div class="col-8">
             <label class="form-label text-muted small">Rola Discord</label>
-            <select name="role_id" id="editRole" class="form-select bg-dark border-secondary text-white">
+            <select name="role_id" id="editRole"
+                    class="form-select bg-dark border-secondary text-white">
               <option value="">Brak</option>
               {% for role in guild_roles %}
               {% if role.name != '@everyone' %}
@@ -191,10 +353,13 @@
             </select>
           </div>
         </div>
+
         <div class="mb-3">
           <label class="form-label text-muted small">Opis</label>
-          <input type="text" name="description" id="editDesc" class="form-control bg-dark border-secondary text-white">
+          <input type="text" name="description" id="editDesc"
+                 class="form-control bg-dark border-secondary text-white">
         </div>
+
       </div>
       <div class="modal-footer border-secondary">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Anuluj</button>
@@ -206,6 +371,7 @@
 </div>
 
 {% endblock %}
+
 {% block extra_js %}
 <script>
 function togglePointsField() {
@@ -214,17 +380,29 @@ function togglePointsField() {
 }
 
 function editRank(rank) {
-  document.getElementById('editRankForm').action = '/guild/{{ guild_id }}/ranks/' + rank.id + '/edit';
-  document.getElementById('editName').value = rank.name;
-  document.getElementById('editPoints').value = rank.required_points;
-  document.getElementById('editIcon').value = rank.icon;
-  document.getElementById('editColor').value = rank.color;
-  document.getElementById('editDesc').value = rank.description || '';
+  document.getElementById('editRankForm').action =
+    '/guild/{{ guild_id }}/ranks/' + rank.id + '/edit';
+  document.getElementById('editName').value     = rank.name      || '';
+  document.getElementById('editPoints').value   = rank.required_points || 0;
+  document.getElementById('editIcon').value     = rank.icon      || '⭐';
+  document.getElementById('editColor').value    = rank.color     || '#7289da';
+  document.getElementById('editDesc').value     = rank.description || '';
+  document.getElementById('editCategory').value = rank.category  || '';
+
+  // Set role
   const roleSelect = document.getElementById('editRole');
   for (let opt of roleSelect.options) {
     opt.selected = opt.value == rank.role_id;
   }
-  document.getElementById('editPointsField').style.display = rank.is_special ? 'none' : '';
+  // Set faction
+  const facSelect = document.getElementById('editFaction');
+  for (let opt of facSelect.options) {
+    opt.selected = opt.value == (rank.faction_id || '');
+  }
+
+  document.getElementById('editPointsField').style.display =
+    rank.is_special ? 'none' : '';
+
   new bootstrap.Modal(document.getElementById('editRankModal')).show();
 }
 </script>

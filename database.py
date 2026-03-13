@@ -201,6 +201,41 @@ def init_db():
                 created_at  TEXT    DEFAULT (datetime('now')),
                 UNIQUE(guild_id, name)
             );
+
+            CREATE TABLE IF NOT EXISTS faction_members (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     INTEGER NOT NULL,
+                guild_id    INTEGER NOT NULL,
+                faction_id  INTEGER NOT NULL,
+                assigned_by INTEGER DEFAULT NULL,
+                assigned_at TEXT    DEFAULT (datetime('now')),
+                UNIQUE(user_id, guild_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS jobs (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id         INTEGER NOT NULL,
+                name             TEXT    NOT NULL,
+                required_points  REAL    DEFAULT 0,
+                icon             TEXT    DEFAULT '💼',
+                color            TEXT    DEFAULT '#7289da',
+                description      TEXT    DEFAULT '',
+                role_id          INTEGER DEFAULT NULL,
+                display_order    INTEGER DEFAULT 0,
+                created_at       TEXT    DEFAULT (datetime('now')),
+                UNIQUE(guild_id, name)
+            );
+
+            CREATE TABLE IF NOT EXISTS user_jobs (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id       INTEGER NOT NULL,
+                guild_id      INTEGER NOT NULL,
+                job_id        INTEGER NOT NULL,
+                admin_granted INTEGER DEFAULT 0,
+                granted_by    INTEGER DEFAULT NULL,
+                selected_at   TEXT    DEFAULT (datetime('now')),
+                UNIQUE(user_id, guild_id, job_id)
+            );
         ''')
         conn.commit()
         _run_migrations(conn)
@@ -230,6 +265,30 @@ def _run_migrations(conn):
         "ALTER TABLE daily_embeds ADD COLUMN event_type TEXT DEFAULT 'Zmiana'",
         "ALTER TABLE daily_embeds ADD COLUMN is_finished INTEGER DEFAULT 0",
         "ALTER TABLE daily_embeds ADD COLUMN finished_at TEXT DEFAULT NULL",
+        "ALTER TABLE ranks ADD COLUMN category TEXT DEFAULT ''",
+        "ALTER TABLE ranks ADD COLUMN faction_id INTEGER DEFAULT NULL",
+        """CREATE TABLE IF NOT EXISTS faction_members (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL, guild_id INTEGER NOT NULL,
+            faction_id INTEGER NOT NULL, assigned_by INTEGER DEFAULT NULL,
+            assigned_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(user_id, guild_id))""",
+        "ALTER TABLE guilds ADD COLUMN job_channel_id INTEGER DEFAULT NULL",
+        """CREATE TABLE IF NOT EXISTS jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id INTEGER NOT NULL, name TEXT NOT NULL,
+            required_points REAL DEFAULT 0, icon TEXT DEFAULT '💼',
+            color TEXT DEFAULT '#7289da', description TEXT DEFAULT '',
+            role_id INTEGER DEFAULT NULL, display_order INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(guild_id, name))""",
+        """CREATE TABLE IF NOT EXISTS user_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL, guild_id INTEGER NOT NULL,
+            job_id INTEGER NOT NULL, admin_granted INTEGER DEFAULT 0,
+            granted_by INTEGER DEFAULT NULL,
+            selected_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(user_id, guild_id, job_id))""",
     ]
     for m in migrations:
         try:
@@ -385,6 +444,10 @@ def reset_user(user_id: int, guild_id: int) -> None:
                          (user_id, guild_id))
             conn.execute('DELETE FROM warnings WHERE user_id=? AND guild_id=?',
                          (user_id, guild_id))
+            conn.execute('DELETE FROM user_jobs WHERE user_id=? AND guild_id=?',
+                         (user_id, guild_id))
+            conn.execute('DELETE FROM faction_members WHERE user_id=? AND guild_id=?',
+                         (user_id, guild_id))
             conn.commit()
 
 
@@ -470,18 +533,20 @@ def create_rank(guild_id: int, name: str, required_points: float = 0,
                 description: str = '', icon: str = '⭐',
                 is_special: bool = False, is_owner_only: bool = False,
                 grant_role_ids: list = None,
-                display_order: int = 0) -> Optional[Dict]:
+                display_order: int = 0,
+                category: str = '',
+                faction_id: int = None) -> Optional[Dict]:
     with _lock:
         with _get_conn() as conn:
             try:
                 cur = conn.execute(
                     '''INSERT INTO ranks
                        (guild_id,name,required_points,role_id,color,description,icon,
-                        is_special,is_owner_only,grant_role_ids,display_order)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+                        is_special,is_owner_only,grant_role_ids,display_order,category,faction_id)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                     (guild_id, name, required_points, role_id, color, description, icon,
                      1 if is_special else 0, 1 if is_owner_only else 0,
-                     json.dumps(grant_role_ids or []), display_order)
+                     json.dumps(grant_role_ids or []), display_order, category, faction_id)
                 )
                 conn.commit()
                 return get_rank_by_id(cur.lastrowid)
@@ -508,16 +573,56 @@ def delete_rank(rank_id: int) -> None:
             conn.commit()
 
 
-def get_user_auto_rank(user_id: int, guild_id: int) -> Optional[Dict]:
+def get_user_auto_rank(user_id: int, guild_id: int,
+                        points_override: float = None) -> Optional[Dict]:
+    """Faction-aware: returns the highest rank the user qualifies for in their faction
+    (or civilian ranks if not in any faction)."""
     u = get_user(user_id, guild_id)
     if not u:
         return None
+    pts = points_override if points_override is not None else u['points']
+    fm  = get_user_faction_membership(user_id, guild_id)
+    fid = fm['faction_id'] if fm else None
     with _get_conn() as conn:
-        row = conn.execute(
-            '''SELECT * FROM ranks WHERE guild_id=? AND is_special=0
-               AND required_points<=? ORDER BY required_points DESC LIMIT 1''',
-            (guild_id, u['points'])
-        ).fetchone()
+        if fid is not None:
+            row = conn.execute(
+                '''SELECT * FROM ranks WHERE guild_id=? AND faction_id=?
+                   AND is_special=0 AND is_owner_only=0 AND required_points<=?
+                   ORDER BY required_points DESC LIMIT 1''',
+                (guild_id, fid, pts)
+            ).fetchone()
+        else:
+            row = conn.execute(
+                '''SELECT * FROM ranks WHERE guild_id=? AND (faction_id IS NULL OR faction_id=0)
+                   AND is_special=0 AND is_owner_only=0 AND required_points<=?
+                   ORDER BY required_points DESC LIMIT 1''',
+                (guild_id, pts)
+            ).fetchone()
+        return dict(row) if row else None
+
+
+def get_user_next_rank(user_id: int, guild_id: int) -> Optional[Dict]:
+    """Returns the next rank the user can earn (faction-aware)."""
+    u = get_user(user_id, guild_id)
+    if not u:
+        return None
+    fm  = get_user_faction_membership(user_id, guild_id)
+    fid = fm['faction_id'] if fm else None
+    with _get_conn() as conn:
+        if fid is not None:
+            row = conn.execute(
+                '''SELECT * FROM ranks WHERE guild_id=? AND faction_id=?
+                   AND is_special=0 AND is_owner_only=0 AND required_points>?
+                   ORDER BY required_points ASC LIMIT 1''',
+                (guild_id, fid, u['points'])
+            ).fetchone()
+        else:
+            row = conn.execute(
+                '''SELECT * FROM ranks WHERE guild_id=? AND (faction_id IS NULL OR faction_id=0)
+                   AND is_special=0 AND is_owner_only=0 AND required_points>?
+                   ORDER BY required_points ASC LIMIT 1''',
+                (guild_id, u['points'])
+            ).fetchone()
         return dict(row) if row else None
 
 
@@ -1040,7 +1145,7 @@ def delete_faction(faction_id: int) -> None:
 
 
 def get_user_faction(guild_id: int, member_role_ids: List[int]) -> Optional[Dict]:
-    """Return first faction whose role_ids intersect with member_role_ids."""
+    """Legacy: return faction by Discord role_ids intersection (kept for compat)."""
     import json as _json
     factions = get_factions(guild_id)
     for f in factions:
@@ -1051,6 +1156,70 @@ def get_user_faction(guild_id: int, member_role_ids: List[int]) -> Optional[Dict
         if any(rid in f_roles for rid in member_role_ids):
             return f
     return None
+
+
+# ─── Faction membership (explicit, admin-assigned) ────────────────────────────
+
+def get_user_faction_membership(user_id: int, guild_id: int) -> Optional[Dict]:
+    """Returns faction membership record with faction details, or None."""
+    with _get_conn() as conn:
+        row = conn.execute(
+            '''SELECT fm.*, f.name AS faction_name, f.icon AS faction_icon,
+                      f.color AS faction_color, f.description AS faction_description
+               FROM faction_members fm
+               JOIN factions f ON fm.faction_id = f.id
+               WHERE fm.user_id=? AND fm.guild_id=?''',
+            (user_id, guild_id)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def assign_faction_member(user_id: int, guild_id: int, faction_id: int,
+                          assigned_by: int = None) -> bool:
+    """Assign (or move) a user to a faction. Replaces existing membership."""
+    with _lock:
+        with _get_conn() as conn:
+            try:
+                conn.execute(
+                    '''INSERT INTO faction_members (user_id, guild_id, faction_id, assigned_by)
+                       VALUES (?,?,?,?)
+                       ON CONFLICT(user_id, guild_id) DO UPDATE SET
+                         faction_id=excluded.faction_id,
+                         assigned_by=excluded.assigned_by,
+                         assigned_at=datetime('now')''',
+                    (user_id, guild_id, faction_id, assigned_by)
+                )
+                conn.commit()
+                return True
+            except Exception:
+                return False
+
+
+def remove_faction_member(user_id: int, guild_id: int) -> bool:
+    """Remove a user from their faction. Returns True if they were in one."""
+    with _lock:
+        with _get_conn() as conn:
+            cur = conn.execute(
+                'DELETE FROM faction_members WHERE user_id=? AND guild_id=?',
+                (user_id, guild_id)
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+
+def get_faction_members(guild_id: int, faction_id: int) -> List[Dict]:
+    """Returns all users in a given faction with basic user data."""
+    with _get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            '''SELECT fm.user_id, fm.assigned_at,
+                      COALESCE(u.display_name, u.username, CAST(fm.user_id AS TEXT)) AS display_name,
+                      u.points
+               FROM faction_members fm
+               LEFT JOIN users u ON fm.user_id=u.user_id AND u.guild_id=fm.guild_id
+               WHERE fm.guild_id=? AND fm.faction_id=?
+               ORDER BY COALESCE(u.points, 0) DESC''',
+            (guild_id, faction_id)
+        ).fetchall()]
 
 
 # ─── Stats ────────────────────────────────────────────────────────────────────
@@ -1100,3 +1269,155 @@ def get_daily_activity(guild_id: int, days: int = 14) -> List[Dict]:
                 'sessions': int(list(sessions)[0] or 0),
             })
     return result
+
+
+# ─── Jobs ─────────────────────────────────────────────────────────────────────
+
+def get_jobs(guild_id: int) -> List[Dict]:
+    with _get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            'SELECT * FROM jobs WHERE guild_id=? ORDER BY required_points ASC, display_order ASC',
+            (guild_id,)
+        ).fetchall()]
+
+
+def get_job_by_id(job_id: int) -> Optional[Dict]:
+    with _get_conn() as conn:
+        row = conn.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def get_job_by_name(guild_id: int, name: str) -> Optional[Dict]:
+    with _get_conn() as conn:
+        row = conn.execute(
+            'SELECT * FROM jobs WHERE guild_id=? AND LOWER(name)=LOWER(?)',
+            (guild_id, name)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def create_job(guild_id: int, name: str, required_points: float = 0,
+               icon: str = '💼', color: str = '#7289da',
+               description: str = '', role_id: int = None,
+               display_order: int = 0) -> Optional[Dict]:
+    with _lock:
+        with _get_conn() as conn:
+            try:
+                cur = conn.execute(
+                    '''INSERT INTO jobs
+                       (guild_id,name,required_points,icon,color,description,role_id,display_order)
+                       VALUES (?,?,?,?,?,?,?,?)''',
+                    (guild_id, name, required_points, icon, color, description,
+                     role_id, display_order)
+                )
+                conn.commit()
+                return get_job_by_id(cur.lastrowid)
+            except Exception:
+                return None
+
+
+def update_job(job_id: int, **kwargs) -> None:
+    if not kwargs:
+        return
+    set_clause = ', '.join(f'{k}=?' for k in kwargs)
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute(f'UPDATE jobs SET {set_clause} WHERE id=?',
+                         list(kwargs.values()) + [job_id])
+            conn.commit()
+
+
+def delete_job(job_id: int) -> None:
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute('DELETE FROM user_jobs WHERE job_id=?', (job_id,))
+            conn.execute('DELETE FROM jobs WHERE id=?', (job_id,))
+            conn.commit()
+
+
+def get_user_jobs(user_id: int, guild_id: int) -> List[Dict]:
+    """Returns jobs the user has selected, with full job details."""
+    with _get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            '''SELECT j.*, uj.admin_granted, uj.granted_by, uj.selected_at AS job_selected_at
+               FROM user_jobs uj
+               JOIN jobs j ON uj.job_id = j.id
+               WHERE uj.user_id=? AND uj.guild_id=?
+               ORDER BY j.required_points ASC''',
+            (user_id, guild_id)
+        ).fetchall()]
+
+
+def get_available_jobs(user_id: int, guild_id: int) -> List[Dict]:
+    """Returns jobs the user can select (points meet threshold, not yet selected)."""
+    u = get_user(user_id, guild_id)
+    if not u:
+        return []
+    pts = u['points']
+    with _get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            '''SELECT j.* FROM jobs j
+               WHERE j.guild_id=? AND j.required_points<=?
+               AND j.id NOT IN (
+                   SELECT job_id FROM user_jobs WHERE user_id=? AND guild_id=?
+               )
+               ORDER BY j.required_points ASC''',
+            (guild_id, pts, user_id, guild_id)
+        ).fetchall()]
+
+
+def select_job(user_id: int, guild_id: int, job_id: int,
+               admin_granted: bool = False, granted_by: int = None) -> bool:
+    """Add a job to user's selected jobs. Returns True on success."""
+    with _lock:
+        with _get_conn() as conn:
+            try:
+                conn.execute(
+                    '''INSERT OR IGNORE INTO user_jobs
+                       (user_id, guild_id, job_id, admin_granted, granted_by)
+                       VALUES (?,?,?,?,?)''',
+                    (user_id, guild_id, job_id,
+                     1 if admin_granted else 0, granted_by)
+                )
+                conn.commit()
+                return True
+            except Exception:
+                return False
+
+
+def deselect_job(user_id: int, guild_id: int, job_id: int) -> bool:
+    """Remove a job from user's selected jobs. Returns True if it existed."""
+    with _lock:
+        with _get_conn() as conn:
+            cur = conn.execute(
+                'DELETE FROM user_jobs WHERE user_id=? AND guild_id=? AND job_id=?',
+                (user_id, guild_id, job_id)
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+
+def deselect_all_jobs(user_id: int, guild_id: int) -> None:
+    """Remove all jobs from a user (used on reset)."""
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute(
+                'DELETE FROM user_jobs WHERE user_id=? AND guild_id=?',
+                (user_id, guild_id)
+            )
+            conn.commit()
+
+
+def get_job_members(guild_id: int, job_id: int) -> List[Dict]:
+    """Returns all users who have selected this job, with basic user data."""
+    with _get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            '''SELECT uj.user_id, uj.selected_at, uj.admin_granted,
+                      COALESCE(u.display_name, u.username, CAST(uj.user_id AS TEXT)) AS display_name,
+                      u.points
+               FROM user_jobs uj
+               LEFT JOIN users u ON uj.user_id=u.user_id AND u.guild_id=uj.guild_id
+               WHERE uj.guild_id=? AND uj.job_id=?
+               ORDER BY COALESCE(u.points, 0) DESC''',
+            (guild_id, job_id)
+        ).fetchall()]

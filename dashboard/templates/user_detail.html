@@ -69,14 +69,29 @@
     <div class="card p-3 mt-3">
       <div class="section-title"><i class="bi bi-star me-1"></i>Rangi</div>
       {% if auto_rank %}
-      <div class="mb-2">
+      <div class="mb-1">
         <span class="badge" style="background:{{ auto_rank.color }};color:#fff">
           {{ auto_rank.icon }} {{ auto_rank.name }}
         </span>
         <small class="text-muted ms-1">auto ({{ auto_rank.required_points | round(0) | int }} pkt)</small>
       </div>
       {% else %}
-      <p class="text-muted small">Brak rangi automatycznej.</p>
+      <p class="text-muted small mb-1">Brak rangi (cywil)</p>
+      {% endif %}
+      {% if next_rank %}
+      <div class="mb-2">
+        {% set span = next_rank.required_points - (auto_rank.required_points if auto_rank else 0) %}
+        {% set from_pts = (auto_rank.required_points if auto_rank else 0) %}
+        {% set filled = ((user.points - from_pts) / span * 10) | round(0) | int if span > 0 else 10 %}
+        {% set filled = [0, [filled, 10] | min] | max %}
+        <small class="text-muted">
+          Postęp → {{ next_rank.icon }} {{ next_rank.name }}:
+          <span class="text-white">{{ user.points | round(0) | int }}/{{ next_rank.required_points | round(0) | int }} pkt</span>
+        </small>
+        <div class="progress mt-1" style="height:5px;background:rgba(255,255,255,.1)">
+          <div class="progress-bar" style="width:{{ filled * 10 }}%;background:{{ next_rank.color or '#7289da' }}"></div>
+        </div>
+      </div>
       {% endif %}
       {% for sr in specials %}
       <div class="d-flex align-items-center gap-2 mb-1">
@@ -104,6 +119,89 @@
                placeholder="Nota (opcjonalna)">
         <button class="btn btn-sm btn-discord w-100">Nadaj rangę</button>
       </form>
+      {% endif %}
+    </div>
+
+    <!-- Faction card -->
+    <div class="card p-3 mt-3">
+      <div class="section-title"><i class="bi bi-shield-shaded me-1"></i>Frakcja</div>
+      {% if user_faction %}
+      <div class="d-flex align-items-center gap-2 mb-2 p-2 rounded"
+           style="background:rgba(0,0,0,.2);border-left:3px solid {{ user_faction.faction_color or '#7289da' }}">
+        <span class="fs-5">{{ user_faction.faction_icon }}</span>
+        <div>
+          <div class="fw-bold text-white">{{ user_faction.faction_name }}</div>
+          <small class="text-muted">od {{ user_faction.assigned_at[:10] if user_faction.assigned_at else '—' }}</small>
+        </div>
+      </div>
+      <form method="POST" action="{{ url_for('remove_faction_action', guild_id=guild_id, user_id=user_id) }}"
+            onsubmit="return confirm('Usunąć z frakcji?')">
+        <button class="btn btn-sm btn-outline-danger w-100">
+          <i class="bi bi-shield-x me-1"></i>Usuń z frakcji
+        </button>
+      </form>
+      {% else %}
+      <p class="text-muted small mb-2">Nie należy do żadnej frakcji (cywil).</p>
+      {% endif %}
+
+      {% if factions %}
+      <hr class="border-secondary">
+      <div class="section-title">{{ 'Przenieś do frakcji' if user_faction else 'Przypisz do frakcji' }}</div>
+      <form method="POST" action="{{ url_for('assign_faction_action', guild_id=guild_id, user_id=user_id) }}">
+        <select name="faction_id" class="form-select form-select-sm bg-dark border-secondary text-white mb-2">
+          {% for f in factions %}
+          <option value="{{ f.id }}" {% if user_faction and user_faction.faction_id == f.id %}selected{% endif %}>
+            {{ f.icon }} {{ f.name }}
+          </option>
+          {% endfor %}
+        </select>
+        <button class="btn btn-sm btn-discord w-100">
+          <i class="bi bi-shield-plus me-1"></i>{{ 'Przenieś' if user_faction else 'Przypisz' }}
+        </button>
+      </form>
+      {% endif %}
+    </div>
+
+    <!-- Jobs card -->
+    <div class="card p-3 mt-3">
+      <div class="section-title"><i class="bi bi-briefcase me-1"></i>Prace</div>
+      {% if user_jobs %}
+      <div class="mb-2">
+        {% for j in user_jobs %}
+        <div class="d-flex align-items-center justify-content-between mb-1 p-1 rounded"
+             style="background:rgba(0,0,0,.2);border-left:3px solid {{ j.color or '#7289da' }}">
+          <span>{{ j.icon }} <strong>{{ j.name }}</strong>
+            {% if j.admin_granted %}<span class="badge bg-secondary ms-1" style="font-size:.6em">admin</span>{% endif %}
+          </span>
+          <form method="POST" action="{{ url_for('take_job_action', guild_id=guild_id, user_id=user_id) }}"
+                onsubmit="return confirm('Odebrać pracę {{ j.name }}?')" class="mb-0">
+            <input type="hidden" name="job_id" value="{{ j.id }}">
+            <button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:.7em">✕</button>
+          </form>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-muted small mb-2">Brak aktywnych prac.</p>
+      {% endif %}
+
+      {% if all_jobs %}
+      {% set current_job_ids = user_jobs | map(attribute='id') | list %}
+      {% set available = all_jobs | rejectattr('id', 'in', current_job_ids) | list %}
+      {% if available %}
+      <hr class="border-secondary">
+      <div class="section-title">Przydziel pracę (admin)</div>
+      <form method="POST" action="{{ url_for('give_job_action', guild_id=guild_id, user_id=user_id) }}">
+        <select name="job_id" class="form-select form-select-sm bg-dark border-secondary text-white mb-2">
+          {% for j in available %}
+          <option value="{{ j.id }}">{{ j.icon }} {{ j.name }} ({{ j.required_points | int }} pkt)</option>
+          {% endfor %}
+        </select>
+        <button class="btn btn-sm btn-discord w-100">
+          <i class="bi bi-briefcase-fill me-1"></i>Nadaj pracę
+        </button>
+      </form>
+      {% endif %}
       {% endif %}
     </div>
   </div>

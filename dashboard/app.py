@@ -60,6 +60,19 @@ def _dpost(path, payload):
     except Exception as exc:
         return None, str(exc)
 
+def _dpatch(path, payload):
+    """PATCH to Discord API. Returns (response_dict, error_str) tuple."""
+    try:
+        r = requests.patch(f'{DISCORD_API}{path}',
+                           headers={'Authorization': f'Bot {_tok()}'},
+                           json=payload, timeout=5)
+        data = r.json() if r.content else {}
+        if r.ok:
+            return data, None
+        return None, data.get('message', f'HTTP {r.status_code}')
+    except Exception as exc:
+        return None, str(exc)
+
 def _guild_info(guild_id):
     info = _dget(f'/guilds/{guild_id}')
     return info or {}
@@ -86,6 +99,7 @@ def _fmt(dt_str):
 app.jinja_env.filters['fmtdt']     = _fmt
 app.jinja_env.filters['r2']        = lambda x: round(float(x or 0), 2)
 app.jinja_env.filters['from_json'] = lambda s: json.loads(s) if s else []
+app.jinja_env.filters['hex_color'] = lambda x: f'#{int(x):06X}'
 
 
 # ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -176,18 +190,21 @@ def send_clock_embed(guild_id):
     day_name = db.DAYS_PL[now.weekday()]
 
     embed_obj = {
-        'title': '📋 Codzienny Apel',
+        'title': '📋 Codzienny Apel – Baza MOPS',
         'description': (
             f'**{day_name}, {now.strftime("%d.%m.%Y")}**\n\n'
-            '📌 Oznacz swoją aktywność przyciskami poniżej.\n'
-            '• **Clock In** – gdy zaczynasz\n'
-            '• **Clock Out** – gdy kończysz\n\n'
+            '━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+            '🟢 **Clock In** — Zacznij sesję aktywności\n'
+            '🔴 **Clock Out** — Zakończ sesję aktywności\n'
+            '━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'
+            '> Punkty przyznawane za każdą godzinę aktywności.\n'
+            '> Pamiętaj żeby się wylogować po zakończeniu!\n\n'
             f'👥 Aktywnych teraz: **{stats["active_now"]}**\n'
             f'⚠️ Ostrzeżenia (serwer): **{stats["warning_count"]}**'
         ),
-        'color': 0x7289DA,
+        'color': 0x2ECC71,
         'timestamp': datetime.now(timezone.utc).isoformat(),
-        'footer': {'text': 'System Rang • Punkty za aktywność'},
+        'footer': {'text': 'System Rang MOPS • Punkty za aktywność'},
     }
     components = [{
         'type': 1,
@@ -226,13 +243,18 @@ def user_detail(guild_id, user_id):
     db.ensure_user(user_id, guild_id)
     info = _guild_info(guild_id)
     user = db.get_user(user_id, guild_id)
-    auto_rank = db.get_user_auto_rank(user_id, guild_id)
-    specials  = db.get_user_special_ranks(user_id, guild_id)
-    sessions  = db.get_user_sessions(user_id, guild_id, limit=20)
-    txs       = db.get_user_transactions(user_id, guild_id, limit=20)
-    warns     = db.get_warnings(user_id, guild_id)
+    auto_rank    = db.get_user_auto_rank(user_id, guild_id)
+    next_rank    = db.get_user_next_rank(user_id, guild_id)
+    specials     = db.get_user_special_ranks(user_id, guild_id)
+    sessions     = db.get_user_sessions(user_id, guild_id, limit=20)
+    txs          = db.get_user_transactions(user_id, guild_id, limit=20)
+    warns        = db.get_warnings(user_id, guild_id)
     all_special_ranks = db.get_ranks(guild_id, special_only=True)
     rank_history = db.get_rank_history(user_id, guild_id, limit=20)
+    user_faction = db.get_user_faction_membership(user_id, guild_id)
+    factions     = db.get_factions(guild_id)
+    user_jobs    = db.get_user_jobs(user_id, guild_id)
+    all_jobs     = db.get_jobs(guild_id)
     cfg = db.get_guild(guild_id) or {}
     member_info = _dget(f'/guilds/{guild_id}/members/{user_id}')
     avatar_url = None
@@ -240,10 +262,12 @@ def user_detail(guild_id, user_id):
         avatar_url = f'https://cdn.discordapp.com/avatars/{user_id}/{member_info["user"]["avatar"]}.png'
     return render_template('user_detail.html',
         guild_id=guild_id, guild_name=info.get('name', str(guild_id)),
-        user=user, user_id=user_id, auto_rank=auto_rank,
+        user=user, user_id=user_id, auto_rank=auto_rank, next_rank=next_rank,
         specials=specials, sessions=sessions, txs=txs, warns=warns,
         all_special_ranks=all_special_ranks, avatar_url=avatar_url,
-        rank_history=rank_history, warn_limit=cfg.get('warn_limit', 3))
+        rank_history=rank_history, warn_limit=cfg.get('warn_limit', 3),
+        user_faction=user_faction, factions=factions,
+        user_jobs=user_jobs, all_jobs=all_jobs)
 
 @app.route('/guild/<int:guild_id>/users/<int:user_id>/addpoints', methods=['POST'])
 @login_required
@@ -340,6 +364,56 @@ def take_rank_action(guild_id, user_id, rank_id):
     flash('Ranga odebrana.', 'warning')
     return redirect(url_for('user_detail', guild_id=guild_id, user_id=user_id))
 
+@app.route('/guild/<int:guild_id>/users/<int:user_id>/assignfaction', methods=['POST'])
+@login_required
+def assign_faction_action(guild_id, user_id):
+    faction_id = request.form.get('faction_id', '').strip()
+    if not faction_id or not faction_id.isdigit():
+        flash('Wybierz frakcję.', 'danger')
+        return redirect(url_for('user_detail', guild_id=guild_id, user_id=user_id))
+    f = db.get_faction_by_id(int(faction_id))
+    if not f or f['guild_id'] != guild_id:
+        flash('Frakcja nie istnieje.', 'danger')
+        return redirect(url_for('user_detail', guild_id=guild_id, user_id=user_id))
+    db.ensure_user(user_id, guild_id)
+    ok = db.assign_faction_member(user_id, guild_id, int(faction_id), assigned_by=0)
+    flash(f'Przypisano do frakcji {f["icon"]} {f["name"]}.' if ok else 'Błąd przypisania.', 'success' if ok else 'danger')
+    return redirect(url_for('user_detail', guild_id=guild_id, user_id=user_id))
+
+@app.route('/guild/<int:guild_id>/users/<int:user_id>/removefaction', methods=['POST'])
+@login_required
+def remove_faction_action(guild_id, user_id):
+    ok = db.remove_faction_member(user_id, guild_id)
+    flash('Usunięto z frakcji.' if ok else 'Użytkownik nie jest w żadnej frakcji.', 'success' if ok else 'warning')
+    return redirect(url_for('user_detail', guild_id=guild_id, user_id=user_id))
+
+@app.route('/guild/<int:guild_id>/users/<int:user_id>/givejob', methods=['POST'])
+@login_required
+def give_job_action(guild_id, user_id):
+    job_id_raw = request.form.get('job_id', '').strip()
+    if not job_id_raw or not job_id_raw.isdigit():
+        flash('Wybierz pracę.', 'danger')
+        return redirect(url_for('user_detail', guild_id=guild_id, user_id=user_id))
+    j = db.get_job_by_id(int(job_id_raw))
+    if not j or j['guild_id'] != guild_id:
+        flash('Praca nie istnieje.', 'danger')
+        return redirect(url_for('user_detail', guild_id=guild_id, user_id=user_id))
+    db.ensure_user(user_id, guild_id)
+    ok = db.select_job(user_id, guild_id, j['id'], admin_granted=True, granted_by=0)
+    flash(f'Przydzielono pracę {j["icon"]} {j["name"]}.' if ok else 'Użytkownik już ma tę pracę.', 'success' if ok else 'warning')
+    return redirect(url_for('user_detail', guild_id=guild_id, user_id=user_id))
+
+@app.route('/guild/<int:guild_id>/users/<int:user_id>/takejob', methods=['POST'])
+@login_required
+def take_job_action(guild_id, user_id):
+    job_id_raw = request.form.get('job_id', '').strip()
+    if not job_id_raw or not job_id_raw.isdigit():
+        flash('Wybierz pracę.', 'danger')
+        return redirect(url_for('user_detail', guild_id=guild_id, user_id=user_id))
+    ok = db.deselect_job(user_id, guild_id, int(job_id_raw))
+    flash('Praca odebrana.' if ok else 'Użytkownik nie ma tej pracy.', 'success' if ok else 'warning')
+    return redirect(url_for('user_detail', guild_id=guild_id, user_id=user_id))
+
 
 # ─── Ranks ────────────────────────────────────────────────────────────────────
 
@@ -347,12 +421,37 @@ def take_rank_action(guild_id, user_id, rank_id):
 @login_required
 def ranks_page(guild_id):
     db.ensure_guild(guild_id)
-    info = _guild_info(guild_id)
-    ranks = db.get_ranks(guild_id)
+    info        = _guild_info(guild_id)
+    ranks       = db.get_ranks(guild_id)
     guild_roles = _dget(f'/guilds/{guild_id}/roles') or []
+    factions    = db.get_factions(guild_id)
+    role_map    = {str(r['id']): r['name'] for r in guild_roles}
+    fac_map     = {f['id']: f for f in factions}
+
+    # Group by custom category → faction → type default
+    grouped = {}
+    for r in ranks:
+        cat = (r.get('category') or '').strip()
+        if cat:
+            grouped.setdefault(cat, []).append(r)
+        else:
+            fid = r.get('faction_id')
+            if fid and fid in fac_map:
+                f = fac_map[fid]
+                cat = f'{f["icon"]} {f["name"]}'
+            elif r.get('is_owner_only'):
+                cat = '👑 Jednostki'
+            elif r.get('is_special'):
+                cat = '🎖️ Specjalne'
+            else:
+                cat = '🤖 Cywile'
+            grouped.setdefault(cat, []).append(r)
+
     return render_template('ranks.html', guild_id=guild_id,
                            guild_name=info.get('name', str(guild_id)),
-                           ranks=ranks, guild_roles=guild_roles)
+                           ranks=ranks, guild_roles=guild_roles,
+                           grouped_ranks=grouped, factions=factions,
+                           role_map=role_map)
 
 @app.route('/guild/<int:guild_id>/ranks/create', methods=['POST'])
 @login_required
@@ -364,10 +463,13 @@ def create_rank_action(guild_id):
     icon       = request.form.get('icon', '⭐').strip() or '⭐'
     color      = request.form.get('color', '#7289da').strip() or '#7289da'
     desc       = request.form.get('description', '').strip()
+    category   = request.form.get('category', '').strip()
     role_id    = request.form.get('role_id', '').strip()
     role_id    = int(role_id) if role_id.isdigit() else None
     grant_raw  = request.form.getlist('grant_role_ids')
     grant_ids  = [int(r) for r in grant_raw if r.isdigit()]
+    faction_id_raw = request.form.get('faction_id', '').strip()
+    faction_id = int(faction_id_raw) if faction_id_raw.isdigit() else None
     if not name:
         flash('Nazwa jest wymagana.', 'danger')
         return redirect(url_for('ranks_page', guild_id=guild_id))
@@ -376,7 +478,8 @@ def create_rank_action(guild_id):
         return redirect(url_for('ranks_page', guild_id=guild_id))
     db.create_rank(guild_id, name, req_pts, role_id=role_id, color=color,
                    description=desc, icon=icon, is_special=is_special or is_owner,
-                   is_owner_only=is_owner, grant_role_ids=grant_ids)
+                   is_owner_only=is_owner, grant_role_ids=grant_ids,
+                   category=category, faction_id=faction_id)
     flash(f'Ranga "{name}" utworzona.', 'success')
     return redirect(url_for('ranks_page', guild_id=guild_id))
 
@@ -388,13 +491,17 @@ def edit_rank_action(guild_id, rank_id):
     icon     = request.form.get('icon', '⭐').strip() or '⭐'
     color    = request.form.get('color', '#7289da').strip()
     desc     = request.form.get('description', '').strip()
+    category = request.form.get('category', '').strip()
     role_id  = request.form.get('role_id', '').strip()
     role_id  = int(role_id) if role_id.isdigit() else None
     grant_raw = request.form.getlist('grant_role_ids')
     grant_ids = [int(r) for r in grant_raw if r.isdigit()]
+    faction_id_raw = request.form.get('faction_id', '').strip()
+    faction_id = int(faction_id_raw) if faction_id_raw.isdigit() else None
     db.update_rank(rank_id, name=name, required_points=req_pts, icon=icon,
                    color=color, description=desc, role_id=role_id,
-                   grant_role_ids=json.dumps(grant_ids))
+                   grant_role_ids=json.dumps(grant_ids), category=category,
+                   faction_id=faction_id)
     flash('Ranga zaktualizowana.', 'success')
     return redirect(url_for('ranks_page', guild_id=guild_id))
 
@@ -617,9 +724,14 @@ def factions_page(guild_id):
     info     = _guild_info(guild_id)
     factions = db.get_factions(guild_id)
     roles    = _dget(f'/guilds/{guild_id}/roles') or []
+    # Build dict faction_id → members list
+    faction_members = {f['id']: db.get_faction_members(guild_id, f['id'])
+                       for f in factions}
+    all_users = db.get_all_users(guild_id)
     return render_template('factions.html',
         guild_id=guild_id, guild_name=info.get('name', str(guild_id)),
-        factions=factions, guild_roles=roles)
+        factions=factions, guild_roles=roles,
+        faction_members=faction_members, all_users=all_users)
 
 
 @app.route('/guild/<int:guild_id>/factions/create', methods=['POST'])
@@ -670,6 +782,805 @@ def faction_delete(guild_id, faction_id):
     db.delete_faction(faction_id)
     flash(f'Frakcja {f["icon"]} {f["name"]} usunięta.', 'success')
     return redirect(url_for('factions_page', guild_id=guild_id))
+
+
+# ─── Jobs ─────────────────────────────────────────────────────────────────────
+
+@app.route('/guild/<int:guild_id>/jobs')
+@login_required
+def jobs_page(guild_id):
+    db.ensure_guild(guild_id)
+    info     = _guild_info(guild_id)
+    jobs     = db.get_jobs(guild_id)
+    roles    = _dget(f'/guilds/{guild_id}/roles') or []
+    job_members = {j['id']: db.get_job_members(guild_id, j['id']) for j in jobs}
+    return render_template('jobs.html',
+        guild_id=guild_id, guild_name=info.get('name', str(guild_id)),
+        jobs=jobs, guild_roles=roles, job_members=job_members)
+
+
+@app.route('/guild/<int:guild_id>/jobs/create', methods=['POST'])
+@login_required
+def job_create(guild_id):
+    name     = request.form.get('name', '').strip()
+    icon     = request.form.get('icon', '💼').strip() or '💼'
+    color    = request.form.get('color', '#7289da').strip() or '#7289da'
+    desc     = request.form.get('description', '').strip()
+    req_pts_raw = request.form.get('required_points', '0').strip()
+    role_id_raw = request.form.get('role_id', '').strip()
+    try:
+        req_pts = float(req_pts_raw)
+    except ValueError:
+        req_pts = 0.0
+    role_id = int(role_id_raw) if role_id_raw.isdigit() else None
+    if not name:
+        flash('Nazwa pracy jest wymagana.', 'danger')
+        return redirect(url_for('jobs_page', guild_id=guild_id))
+    if db.get_job_by_name(guild_id, name):
+        flash(f'Praca "{name}" już istnieje.', 'danger')
+        return redirect(url_for('jobs_page', guild_id=guild_id))
+    db.create_job(guild_id, name, req_pts, icon=icon, color=color,
+                  description=desc, role_id=role_id)
+    flash(f'Praca {icon} {name} utworzona.', 'success')
+    return redirect(url_for('jobs_page', guild_id=guild_id))
+
+
+@app.route('/guild/<int:guild_id>/jobs/<int:job_id>/edit', methods=['POST'])
+@login_required
+def job_edit(guild_id, job_id):
+    j = db.get_job_by_id(job_id)
+    if not j or j['guild_id'] != guild_id:
+        flash('Nie znaleziono pracy.', 'danger')
+        return redirect(url_for('jobs_page', guild_id=guild_id))
+    name     = request.form.get('name', '').strip() or j['name']
+    icon     = request.form.get('icon', '').strip()  or j['icon']
+    color    = request.form.get('color', '').strip() or j['color']
+    desc     = request.form.get('description', '').strip()
+    req_pts_raw = request.form.get('required_points', '').strip()
+    role_id_raw = request.form.get('role_id', '').strip()
+    try:
+        req_pts = float(req_pts_raw)
+    except ValueError:
+        req_pts = j['required_points']
+    role_id = int(role_id_raw) if role_id_raw.isdigit() else None
+    db.update_job(job_id, name=name, icon=icon, color=color,
+                  description=desc, required_points=req_pts, role_id=role_id)
+    flash(f'Praca {icon} {name} zaktualizowana.', 'success')
+    return redirect(url_for('jobs_page', guild_id=guild_id))
+
+
+@app.route('/guild/<int:guild_id>/jobs/<int:job_id>/delete', methods=['POST'])
+@login_required
+def job_delete(guild_id, job_id):
+    j = db.get_job_by_id(job_id)
+    if not j or j['guild_id'] != guild_id:
+        flash('Nie znaleziono pracy.', 'danger')
+        return redirect(url_for('jobs_page', guild_id=guild_id))
+    db.delete_job(job_id)
+    flash(f'Praca {j["icon"]} {j["name"]} usunięta.', 'success')
+    return redirect(url_for('jobs_page', guild_id=guild_id))
+
+
+# ─── MOPS Auto-Setup – data ───────────────────────────────────────────────────
+
+# ─── Discord role-level permission presets ────────────────────────────────────
+# These are set on the ROLE itself (not channel overwrites) when the role is created.
+# Reference: https://discord.com/developers/docs/topics/permissions
+_RP_ADMIN    = 8                      # Administrator (bypasses ALL channel overwrites)
+_RP_KICK     = 2                      # Kick Members
+_RP_BAN      = 4                      # Ban Members
+_RP_MANAGE_G = 32                     # Manage Server
+_RP_MANAGE_C = 16                     # Manage Channels
+_RP_MANAGE_R = 268435456              # Manage Roles
+_RP_MANAGE_M = 8192                   # Manage Messages (delete/pin others' messages)
+_RP_MUTE     = 4194304                # Mute Members (voice)
+_RP_DEAFEN   = 8388608                # Deafen Members (voice)
+_RP_MOVE     = 16777216               # Move Members (voice channels)
+_RP_PRIORITY = 256                    # Priority Speaker (voice)
+
+MOPS_ROLES = [
+    # ── Władza ──────────────────────────────────────────────────────────────────
+    # 'perms' = Discord role-level permission bits (int, will be str in API call)
+    {'name': 'Król',            'color': 0xFFD700, 'hoist': True,
+     'perms': _RP_ADMIN},
+    {'name': 'Książę',          'color': 0xFFA500, 'hoist': True,
+     'perms': _RP_ADMIN},
+    {'name': 'Generał',         'color': 0xB20000, 'hoist': True,
+     'perms': _RP_KICK|_RP_BAN|_RP_MANAGE_G|_RP_MANAGE_C|_RP_MANAGE_R
+              |_RP_MANAGE_M|_RP_MUTE|_RP_DEAFEN|_RP_MOVE},
+    # ── Alpha-1 Gwardia Królewska ────────────────────────────────────────────────
+    {'name': 'Military Police', 'color': 0xFF0000, 'hoist': True,
+     'perms': _RP_KICK|_RP_BAN|_RP_MANAGE_M|_RP_MUTE|_RP_DEAFEN|_RP_MOVE},
+    {'name': 'Alpha-1',         'color': 0xCC0000, 'hoist': True,
+     'perms': _RP_MANAGE_M|_RP_MUTE|_RP_MOVE},
+    # ── Nu-7 Jednostka wojskowa ──────────────────────────────────────────────────
+    {'name': 'Generał Nu-7',    'color': 0x003399, 'hoist': True,
+     'perms': _RP_KICK|_RP_BAN|_RP_MANAGE_M|_RP_MUTE|_RP_DEAFEN|_RP_MOVE},
+    {'name': 'Nu-7',            'color': 0x0055FF, 'hoist': True,
+     'perms': _RP_MANAGE_M|_RP_MUTE|_RP_MOVE},
+    # ── Wspólne rangi wojskowe (obie frakcje) ────────────────────────────────────
+    {'name': 'Kapitan',         'color': 0x8B0000, 'hoist': True,
+     'perms': _RP_MUTE|_RP_DEAFEN|_RP_MOVE|_RP_PRIORITY},
+    {'name': 'Sierżant',        'color': 0x7B7B00, 'hoist': False,
+     'perms': _RP_MOVE|_RP_PRIORITY},
+    {'name': 'Squad Leader',    'color': 0x556B2F, 'hoist': False,
+     'perms': _RP_PRIORITY},
+    {'name': 'Porucznik',       'color': 0x708090, 'hoist': False, 'perms': 0},
+    {'name': 'Szeregowy',       'color': 0x4682B4, 'hoist': False, 'perms': 0},
+    {'name': 'Rekrut',          'color': 0x2F4F4F, 'hoist': False, 'perms': 0},
+    # ── Prace cywilne ────────────────────────────────────────────────────────────
+    {'name': 'Kowal',           'color': 0x888888, 'hoist': False, 'perms': 0},
+    {'name': 'Farmer',          'color': 0x55AA55, 'hoist': False, 'perms': 0},
+    {'name': 'Cywil',           'color': 0x99AAB5, 'hoist': False, 'perms': 0},
+]
+
+# (category_name, [(channel_name, channel_type), ...])  type: 0=text, 2=voice, 4=category
+MOPS_CHANNELS = [
+    ('📢-informacje', [
+        ('ogłoszenia', 0), ('aktualności', 0), ('regulamin', 0), ('witaj', 0),
+    ]),
+    ('💬-ogólne', [
+        ('ogólny', 0), ('cywile', 0), ('market', 0),
+        ('off-topic', 0), ('komendy-bota', 0),
+    ]),
+    ('📊-bot-mops', [
+        ('apel', 0), ('panel', 0), ('prace', 0),
+    ]),
+    ('⚔️-wojsko', [
+        ('wojsko-ogólne', 0), ('rozkazy', 0), ('raporty', 0),
+        ('alpha-1-czat', 0), ('nu-7-czat', 0), ('planowanie', 0),
+    ]),
+    ('🔊-radio', [
+        ('Radio Ogólne', 2), ('Radio Alpha-1', 2),
+        ('Radio Nu-7', 2), ('Gabinet Króla', 2),
+    ]),
+    # Kategoria administracji – niewidoczna dla zwykłych użytkowników
+    ('🔒-administracja', [
+        ('admin-panel', 0),   # prywatny kanał komend adminowych bota
+        ('logi', 0),          # logi bota (clock, rangi, ostrzeżenia)
+        ('ostrzeżenia', 0),   # historia warnów i moderacji
+    ]),
+]
+
+MOPS_FACTIONS = [
+    {'name': 'Alpha-1', 'icon': '🔴', 'color': '#CC0000',
+     'description': 'Gwardia Królewska – osobista ochrona Króla i Księcia'},
+    {'name': 'Nu-7',    'icon': '🔵', 'color': '#0055FF',
+     'description': 'Podstawowa jednostka wojskowa'},
+]
+
+MOPS_SPECIAL_RANKS = [
+    {'name': 'Król',    'icon': '👑',  'color': '#FFD700',
+     'description': 'Władca Bazy MOPS'},
+    {'name': 'Książę',  'icon': '👑',  'color': '#FFA500',
+     'description': 'Następca tronu'},
+    {'name': 'Generał', 'icon': '🎖️', 'color': '#B20000',
+     'description': 'Naczelny dowódca wszystkich wojsk Bazy MOPS – nadawany przez Króla'},
+]
+
+MOPS_FACTION_RANKS = [
+    # ── Alpha-1 Gwardia Królewska (dół → góra) ─────────────────────────────────
+    # 'role' = Discord role name; 'name' = DB rank display name
+    {'name': 'Rekrut Alpha-1',       'faction': 'Alpha-1', 'role': 'Rekrut',
+     'icon': '🔴', 'pts': 10,  'color': '#2F4F4F', 'special': False, 'owner_only': False,
+     'description': 'Nowy rekrut Gwardii Królewskiej'},
+    {'name': 'Szeregowy Alpha-1',    'faction': 'Alpha-1', 'role': 'Szeregowy',
+     'icon': '🔴', 'pts': 35,  'color': '#4682B4', 'special': False, 'owner_only': False,
+     'description': 'Żołnierz Gwardii Królewskiej'},
+    {'name': 'Porucznik Alpha-1',    'faction': 'Alpha-1', 'role': 'Porucznik',
+     'icon': '🔴', 'pts': 75,  'color': '#708090', 'special': False, 'owner_only': False,
+     'description': 'Oficer Gwardii Królewskiej'},
+    {'name': 'Squad Leader Alpha-1', 'faction': 'Alpha-1', 'role': 'Squad Leader',
+     'icon': '🔴', 'pts': 130, 'color': '#556B2F', 'special': False, 'owner_only': False,
+     'description': 'Dowódca drużyny Gwardii Królewskiej'},
+    {'name': 'Sierżant Alpha-1',     'faction': 'Alpha-1', 'role': 'Sierżant',
+     'icon': '🔴', 'pts': 200, 'color': '#7B7B00', 'special': False, 'owner_only': False,
+     'description': 'Starszy sierżant Gwardii Królewskiej'},
+    {'name': 'Kapitan Alpha-1',      'faction': 'Alpha-1', 'role': 'Kapitan',
+     'icon': '🔴', 'pts': 0,   'color': '#8B0000', 'special': True,  'owner_only': True,
+     'description': 'Kapitan Gwardii Królewskiej – nadawany przez admina'},
+    {'name': 'Military Police',      'faction': 'Alpha-1', 'role': 'Military Police',
+     'icon': '🎖️', 'pts': 0,  'color': '#FF0000', 'special': True,  'owner_only': True,
+     'description': 'Generał Alpha-1 – personalny bodyguard Króla, oficer wszystkich wojsk'},
+
+    # ── Nu-7 Jednostka wojskowa (dół → góra) ───────────────────────────────────
+    {'name': 'Rekrut Nu-7',          'faction': 'Nu-7',    'role': 'Rekrut',
+     'icon': '🔵', 'pts': 10,  'color': '#2F4F4F', 'special': False, 'owner_only': False,
+     'description': 'Nowy rekrut Nu-7'},
+    {'name': 'Szeregowy Nu-7',       'faction': 'Nu-7',    'role': 'Szeregowy',
+     'icon': '🔵', 'pts': 35,  'color': '#4682B4', 'special': False, 'owner_only': False,
+     'description': 'Żołnierz Nu-7'},
+    {'name': 'Porucznik Nu-7',       'faction': 'Nu-7',    'role': 'Porucznik',
+     'icon': '🔵', 'pts': 75,  'color': '#708090', 'special': False, 'owner_only': False,
+     'description': 'Oficer Nu-7'},
+    {'name': 'Squad Leader Nu-7',    'faction': 'Nu-7',    'role': 'Squad Leader',
+     'icon': '🔵', 'pts': 130, 'color': '#556B2F', 'special': False, 'owner_only': False,
+     'description': 'Dowódca drużyny Nu-7'},
+    {'name': 'Sierżant Nu-7',        'faction': 'Nu-7',    'role': 'Sierżant',
+     'icon': '🔵', 'pts': 200, 'color': '#7B7B00', 'special': False, 'owner_only': False,
+     'description': 'Starszy sierżant Nu-7'},
+    {'name': 'Kapitan Nu-7',         'faction': 'Nu-7',    'role': 'Kapitan',
+     'icon': '🔵', 'pts': 0,   'color': '#8B0000', 'special': True,  'owner_only': True,
+     'description': 'Kapitan Nu-7 – nadawany przez admina'},
+    {'name': 'Generał Nu-7',         'faction': 'Nu-7',    'role': 'Generał Nu-7',
+     'icon': '🎖️', 'pts': 0,  'color': '#003399', 'special': True,  'owner_only': True,
+     'description': 'Generał Nu-7 – dowódca jednostki, nadawany przez admina'},
+]
+
+MOPS_JOBS = [
+    {'name': 'Farmer', 'icon': '🌾', 'pts': 5,  'color': '#55AA55',
+     'description': 'Uprawiasz ziemię i karmisz Bazę MOPS'},
+    {'name': 'Kowal',  'icon': '⚒️', 'pts': 10, 'color': '#888888',
+     'description': 'Kujęsz żelazo dla wojska i cywilów'},
+    {'name': 'Kupiec', 'icon': '🛒', 'pts': 25, 'color': '#AA8855',
+     'description': 'Handlujesz na miejskim rynku'},
+    {'name': 'Rajca',  'icon': '🏛️', 'pts': 50, 'color': '#AAAAAA',
+     'description': 'Zasiadasz w radzie miejskiej Bazy MOPS'},
+]
+
+# ─── Channel permission constants ─────────────────────────────────────────────
+# Discord permission bit flags (as Python ints, passed as strings to API)
+_PV   = 1024              # VIEW_CHANNEL
+_PS   = 2048              # SEND_MESSAGES
+_PM   = 8192              # MANAGE_MESSAGES (delete/pin others' messages)
+_PC   = 1048576           # CONNECT (voice)
+_PVS  = _PV | _PS         # view + send (text)
+_PVC  = _PV | _PC         # view + connect (voice)
+_PVMS = _PV | _PS | _PM   # view + send + manage (admin text – for bot channels)
+
+# Per-channel permission rules: {ch_name: [(role_name_or_@everyone, allow, deny), ...]}
+# @everyone uses guild_id as the role ID (Discord convention)
+MOPS_PERMS = {
+    # ── 📢 INFORMACJE ──────────────────────────────────────────────────────────
+    'ogłoszenia': [                       # read-only; commanders can send + manage
+        ('@everyone',       _PV,    _PS | _PM),
+        ('Król',            _PVMS,  0),
+        ('Książę',          _PVMS,  0),
+        ('Generał',         _PVMS,  0),
+        ('Military Police', _PVMS,  0),
+    ],
+    'aktualności': [                      # read-only; commanders can send + manage
+        ('@everyone',       _PV,    _PS | _PM),
+        ('Król',            _PVMS,  0),
+        ('Książę',          _PVMS,  0),
+        ('Generał',         _PVMS,  0),
+        ('Military Police', _PVMS,  0),
+    ],
+    'regulamin': [('@everyone', _PV, _PS | _PM)],    # read-only, no manage
+    'witaj':     [('@everyone', _PV, _PS | _PM)],    # read-only, no manage
+
+    # ── 💬 OGÓLNE ──────────────────────────────────────────────────────────────
+    'ogólny':       [('@everyone', _PVS, 0)],  # main open chat
+    'cywile':       [('@everyone', _PVS, 0)],  # civilian / casual chat
+    'market':       [('@everyone', _PVS, 0)],  # trading & economy chat
+    'off-topic':    [('@everyone', _PVS, 0)],  # off-topic banter
+    'komendy-bota': [('@everyone', _PVS, 0)],  # bot commands
+
+    # ── 📊 BOT MOPS ────────────────────────────────────────────────────────────
+    # Bot channels: @everyone can VIEW but NOT send or manage messages.
+    # Admin roles get MANAGE_MESSAGES so they can pin/delete if needed.
+    'apel':  [
+        ('@everyone',       _PV,   _PS | _PM),  # deny send + manage (protect embed!)
+        ('Król',            _PVMS, 0),
+        ('Książę',          _PVMS, 0),
+        ('Generał',         _PVMS, 0),
+        ('Military Police', _PVMS, 0),
+    ],
+    'panel': [
+        ('@everyone',       _PV,   _PS | _PM),
+        ('Król',            _PVMS, 0),
+        ('Książę',          _PVMS, 0),
+        ('Generał',         _PVMS, 0),
+        ('Military Police', _PVMS, 0),
+    ],
+    'prace': [
+        ('@everyone',       _PV,   _PS | _PM),
+        ('Król',            _PVMS, 0),
+        ('Książę',          _PVMS, 0),
+        ('Generał',         _PVMS, 0),
+        ('Military Police', _PVMS, 0),
+    ],
+    'logi':  [                             # admin-only; inherits from category
+        ('@everyone',       0,     _PV),
+        ('Król',            _PVMS, 0),
+        ('Książę',          _PVMS, 0),
+        ('Generał',         _PVMS, 0),
+        ('Military Police', _PVMS, 0),
+        ('Generał Nu-7',    _PVMS, 0),
+        ('Alpha-1',         _PVMS, 0),
+    ],
+
+    # ── 🔒 ADMINISTRACJA ───────────────────────────────────────────────────────
+    'admin-panel': [                       # admin bot commands (addpoints, giverank…)
+        ('@everyone',       0,     _PV),
+        ('Król',            _PVMS, 0),
+        ('Książę',          _PVMS, 0),
+        ('Generał',         _PVMS, 0),
+        ('Military Police', _PVMS, 0),
+        ('Generał Nu-7',    _PVMS, 0),
+        ('Alpha-1',         _PVMS, 0),
+    ],
+    'ostrzeżenia': [                       # moderation history log
+        ('@everyone',       0,     _PV),
+        ('Król',            _PVMS, 0),
+        ('Książę',          _PVMS, 0),
+        ('Generał',         _PVMS, 0),
+        ('Military Police', _PVMS, 0),
+        ('Generał Nu-7',    _PVMS, 0),
+        ('Alpha-1',         _PVMS, 0),
+    ],
+
+    # ── ⚔️ WOJSKO ──────────────────────────────────────────────────────────────
+    'wojsko-ogólne': [                     # all military (Rekrut+), hidden from civilians
+        ('@everyone',    0,     _PV),
+        ('Król',         _PVS,  0),
+        ('Książę',       _PVS,  0),
+        ('Generał',      _PVS,  0),
+        ('Military Police', _PVS, 0),
+        ('Generał Nu-7', _PVS,  0),
+        ('Alpha-1',      _PVS,  0),
+        ('Nu-7',         _PVS,  0),
+        ('Kapitan',      _PVS,  0),
+        ('Sierżant',     _PVS,  0),
+        ('Squad Leader', _PVS,  0),
+        ('Porucznik',    _PVS,  0),
+        ('Szeregowy',    _PVS,  0),
+        ('Rekrut',       _PVS,  0),
+    ],
+    'rozkazy': [                           # orders: officers write, enlisted read-only
+        ('@everyone',       0,     _PV),
+        ('Król',            _PVS,  0),
+        ('Książę',          _PVS,  0),
+        ('Generał',         _PVS,  0),
+        ('Military Police', _PVS,  0),
+        ('Generał Nu-7',    _PVS,  0),
+        ('Alpha-1',         _PVS,  0),
+        ('Nu-7',            _PVS,  0),
+        ('Kapitan',         _PVS,  0),
+        ('Sierżant',        _PVS,  0),
+        ('Squad Leader',    _PVS,  0),
+        ('Porucznik',       _PV,   0),  # read-only from Porucznik down
+        ('Szeregowy',       _PV,   0),
+        ('Rekrut',          _PV,   0),
+    ],
+    'raporty': [                           # reports: all military can write
+        ('@everyone',       0,     _PV),
+        ('Król',            _PVS,  0),
+        ('Książę',          _PVS,  0),
+        ('Generał',         _PVS,  0),
+        ('Military Police', _PVS,  0),
+        ('Generał Nu-7',    _PVS,  0),
+        ('Alpha-1',         _PVS,  0),
+        ('Nu-7',            _PVS,  0),
+        ('Kapitan',         _PVS,  0),
+        ('Sierżant',        _PVS,  0),
+        ('Squad Leader',    _PVS,  0),
+        ('Porucznik',       _PVS,  0),
+        ('Szeregowy',       _PVS,  0),
+        ('Rekrut',          _PVS,  0),
+    ],
+    'alpha-1-czat': [                      # Alpha-1 faction + commanders only
+        ('@everyone',       0,     _PV),
+        ('Król',            _PVS,  0),
+        ('Książę',          _PVS,  0),
+        ('Generał',         _PVS,  0),
+        ('Military Police', _PVS,  0),
+        ('Alpha-1',         _PVS,  0),
+        ('Kapitan',         _PVS,  0),
+        ('Sierżant',        _PVS,  0),
+        ('Squad Leader',    _PVS,  0),
+        ('Porucznik',       _PVS,  0),
+        ('Szeregowy',       _PVS,  0),
+        ('Rekrut',          _PVS,  0),
+    ],
+    'nu-7-czat': [                         # Nu-7 faction + commanders only
+        ('@everyone',       0,     _PV),
+        ('Król',            _PVS,  0),
+        ('Książę',          _PVS,  0),
+        ('Generał',         _PVS,  0),
+        ('Military Police', _PVS,  0),
+        ('Generał Nu-7',    _PVS,  0),
+        ('Nu-7',            _PVS,  0),
+        ('Kapitan',         _PVS,  0),
+        ('Sierżant',        _PVS,  0),
+        ('Squad Leader',    _PVS,  0),
+        ('Porucznik',       _PVS,  0),
+        ('Szeregowy',       _PVS,  0),
+        ('Rekrut',          _PVS,  0),
+    ],
+    'planowanie': [                        # officers (Porucznik+) and commanders
+        ('@everyone',       0,     _PV),
+        ('Król',            _PVS,  0),
+        ('Książę',          _PVS,  0),
+        ('Generał',         _PVS,  0),
+        ('Military Police', _PVS,  0),
+        ('Generał Nu-7',    _PVS,  0),
+        ('Alpha-1',         _PVS,  0),
+        ('Nu-7',            _PVS,  0),
+        ('Kapitan',         _PVS,  0),
+        ('Sierżant',        _PVS,  0),
+        ('Squad Leader',    _PVS,  0),
+        ('Porucznik',       _PVS,  0),
+    ],
+
+    # ── 🔊 RADIO (voice) ───────────────────────────────────────────────────────
+    'Radio Ogólne': [('@everyone', _PVC, 0)],   # everyone can join
+    'Radio Alpha-1': [                      # Alpha-1 + commanders
+        ('@everyone',       0,     _PVC),
+        ('Król',            _PVC,  0),
+        ('Książę',          _PVC,  0),
+        ('Generał',         _PVC,  0),
+        ('Military Police', _PVC,  0),
+        ('Alpha-1',         _PVC,  0),
+        ('Kapitan',         _PVC,  0),
+        ('Sierżant',        _PVC,  0),
+        ('Squad Leader',    _PVC,  0),
+        ('Porucznik',       _PVC,  0),
+        ('Szeregowy',       _PVC,  0),
+        ('Rekrut',          _PVC,  0),
+    ],
+    'Radio Nu-7': [                         # Nu-7 + commanders
+        ('@everyone',    0,     _PVC),
+        ('Król',         _PVC,  0),
+        ('Książę',       _PVC,  0),
+        ('Generał',      _PVC,  0),
+        ('Military Police', _PVC, 0),
+        ('Generał Nu-7', _PVC,  0),
+        ('Nu-7',         _PVC,  0),
+        ('Kapitan',      _PVC,  0),
+        ('Sierżant',     _PVC,  0),
+        ('Squad Leader', _PVC,  0),
+        ('Porucznik',    _PVC,  0),
+        ('Szeregowy',    _PVC,  0),
+        ('Rekrut',       _PVC,  0),
+    ],
+    'Gabinet Króla': [                      # royal council only
+        ('@everyone',       0,     _PVC),
+        ('Król',            _PVC,  0),
+        ('Książę',          _PVC,  0),
+        ('Generał',         _PVC,  0),
+        ('Military Police', _PVC,  0),
+    ],
+}
+
+# Per-category permission defaults (applied on creation; channels may override)
+MOPS_CAT_PERMS = {
+    '📢-informacje':    [],                           # everyone sees, read-only per channel
+    '💬-ogólne':        [],                           # everyone sees
+    '📊-bot-mops':      [],                           # everyone sees (embeds managed by bot)
+    '⚔️-wojsko':        [('@everyone', 0, _PV)],      # military only by default
+    '🔊-radio':         [('@everyone', 0, _PVC)],     # per-channel controlled
+    '🔒-administracja': [                             # fully hidden from non-admins
+        ('@everyone',       0,     _PV),
+        ('Król',            _PVMS, 0),
+        ('Książę',          _PVMS, 0),
+        ('Generał',         _PVMS, 0),
+        ('Military Police', _PVMS, 0),
+        ('Generał Nu-7',    _PVMS, 0),
+        ('Alpha-1',         _PVMS, 0),
+    ],
+}
+
+
+def _build_overwrites(role_map: dict, guild_id: int, rules: list) -> list:
+    """Build Discord permission_overwrites list from (role_name, allow, deny) rules."""
+    out = []
+    for role_name, allow, deny in rules:
+        if role_name == '@everyone':
+            rid = str(guild_id)
+        else:
+            rid = str(role_map.get(role_name, 0))
+            if rid == '0':
+                continue
+        if allow or deny:
+            out.append({'id': rid, 'type': 0,
+                        'allow': str(allow), 'deny': str(deny)})
+    return out
+
+
+# ─── MOPS Auto-Setup – routes ─────────────────────────────────────────────────
+
+@app.route('/guild/<int:guild_id>/setup-mops')
+@login_required
+def setup_mops_page(guild_id):
+    db.ensure_guild(guild_id)
+    info              = _guild_info(guild_id)
+    existing_roles    = _dget(f'/guilds/{guild_id}/roles') or []
+    existing_channels = _dget(f'/guilds/{guild_id}/channels') or []
+    existing_factions = db.get_factions(guild_id)
+    existing_jobs     = db.get_jobs(guild_id)
+    existing_role_names = {r['name'] for r in existing_roles}
+    existing_ch_names   = {c['name'] for c in existing_channels}
+    existing_fac_names  = {f['name'] for f in existing_factions}
+    existing_job_names  = {j['name'] for j in existing_jobs}
+    return render_template('setup_mops.html',
+        guild_id=guild_id, guild_name=info.get('name', str(guild_id)),
+        mops_roles=MOPS_ROLES, mops_channels=MOPS_CHANNELS,
+        mops_factions=MOPS_FACTIONS, mops_special_ranks=MOPS_SPECIAL_RANKS,
+        mops_faction_ranks=MOPS_FACTION_RANKS, mops_jobs=MOPS_JOBS,
+        existing_role_names=existing_role_names,
+        existing_ch_names=existing_ch_names,
+        existing_fac_names=existing_fac_names,
+        existing_job_names=existing_job_names)
+
+
+@app.route('/guild/<int:guild_id>/setup-mops', methods=['POST'])
+@login_required
+def setup_mops_run(guild_id):
+    db.ensure_guild(guild_id)
+    results  = []
+    role_map = {}   # {role_name: discord_role_id}
+    ch_map   = {}   # {channel_name: channel_id}
+
+    # ── 1. Discord roles ──────────────────────────────────────────────────────
+    existing_roles    = _dget(f'/guilds/{guild_id}/roles') or []
+    existing_role_map = {r['name']: int(r['id']) for r in existing_roles}
+
+    for role_def in MOPS_ROLES:
+        rname = role_def['name']
+        role_payload = {
+            'color': role_def['color'],
+            'hoist': role_def['hoist'],
+            'mentionable': True,
+            'permissions': str(role_def.get('perms', 0)),
+        }
+        if rname in existing_role_map:
+            # Role already exists → PATCH to update color, permissions, hoist
+            rid = existing_role_map[rname]
+            role_map[rname] = rid
+            _dpatch(f'/guilds/{guild_id}/roles/{rid}', role_payload)
+            results.append(f'🔄 Rola "{rname}" zaktualizowana')
+        else:
+            # Create new role
+            data, err = _dpost(f'/guilds/{guild_id}/roles',
+                               {**role_payload, 'name': rname})
+            if data and data.get('id'):
+                role_map[rname] = int(data['id'])
+                results.append(f'✅ Rola: {rname}')
+            else:
+                results.append(f'❌ Błąd roli "{rname}": {err}')
+
+    # ── 2. Categories + channels (with permission overwrites) ─────────────────
+    existing_channels = _dget(f'/guilds/{guild_id}/channels') or []
+    existing_ch_map   = {c['name']: int(c['id']) for c in existing_channels}
+
+    for cat_name, channels_list in MOPS_CHANNELS:
+        cat_ow = _build_overwrites(role_map, guild_id, MOPS_CAT_PERMS.get(cat_name, []))
+        if cat_name in existing_ch_map:
+            # Category exists → PATCH its permission overwrites
+            cat_id = existing_ch_map[cat_name]
+            if cat_ow:
+                _dpatch(f'/channels/{cat_id}', {'permission_overwrites': cat_ow})
+            results.append(f'🔄 Kategoria "{cat_name}" zaktualizowana')
+        else:
+            # Create new category
+            cat_payload = {'name': cat_name, 'type': 4}
+            if cat_ow:
+                cat_payload['permission_overwrites'] = cat_ow
+            data, err = _dpost(f'/guilds/{guild_id}/channels', cat_payload)
+            if data and data.get('id'):
+                cat_id = int(data['id'])
+                results.append(f'✅ Kategoria: {cat_name}')
+            else:
+                results.append(f'❌ Błąd kategorii "{cat_name}": {err}')
+                continue
+
+        for ch_name, ch_type in channels_list:
+            ch_ow = _build_overwrites(role_map, guild_id, MOPS_PERMS.get(ch_name, []))
+            if ch_name in existing_ch_map:
+                # Channel exists → PATCH permission overwrites and parent
+                cid = existing_ch_map[ch_name]
+                ch_map[ch_name] = cid
+                patch_payload = {'parent_id': str(cat_id)}
+                if ch_ow:
+                    patch_payload['permission_overwrites'] = ch_ow
+                _dpatch(f'/channels/{cid}', patch_payload)
+                icon = '#' if ch_type == 0 else '🔊'
+                results.append(f'  🔄 {icon} {ch_name} zaktualizowany')
+            else:
+                # Create new channel
+                ch_payload = {'name': ch_name, 'type': ch_type,
+                              'parent_id': str(cat_id)}
+                if ch_ow:
+                    ch_payload['permission_overwrites'] = ch_ow
+                data, err = _dpost(f'/guilds/{guild_id}/channels', ch_payload)
+                if data and data.get('id'):
+                    ch_map[ch_name] = int(data['id'])
+                    icon = '#' if ch_type == 0 else '🔊'
+                    results.append(f'  ✅ {icon} {ch_name}')
+                else:
+                    results.append(f'  ❌ Błąd kanału "{ch_name}": {err}')
+
+    # ── 3. Factions in DB ─────────────────────────────────────────────────────
+    for fac_def in MOPS_FACTIONS:
+        existing_fac = db.get_faction_by_name(guild_id, fac_def['name'])
+        if not existing_fac:
+            fac_role_id  = role_map.get(fac_def['name'])
+            role_ids_arg = [fac_role_id] if fac_role_id else []
+            existing_fac = db.create_faction(
+                guild_id, fac_def['name'],
+                icon=fac_def['icon'], color=fac_def['color'],
+                description=fac_def['description'],
+                role_ids=role_ids_arg,
+            )
+            results.append(f'✅ Frakcja: {fac_def["icon"]} {fac_def["name"]}')
+        else:
+            results.append(f'⏭️ Frakcja "{fac_def["name"]}" już istnieje')
+
+    # ── 4. Special ranks (Król, Książę) ───────────────────────────────────────
+    for rank_def in MOPS_SPECIAL_RANKS:
+        if not db.get_rank_by_name(guild_id, rank_def['name']):
+            db.create_rank(
+                guild_id, rank_def['name'], 0,
+                role_id=role_map.get(rank_def['name']),
+                color=rank_def['color'], icon=rank_def['icon'],
+                description=rank_def['description'],
+                is_special=True, is_owner_only=True,
+            )
+            results.append(f'✅ Ranga: {rank_def["icon"]} {rank_def["name"]}')
+        else:
+            results.append(f'⏭️ Ranga "{rank_def["name"]}" już istnieje')
+
+    # ── 5. Faction ranks ──────────────────────────────────────────────────────
+    alpha1_fac = db.get_faction_by_name(guild_id, 'Alpha-1')
+    nu7_fac    = db.get_faction_by_name(guild_id, 'Nu-7')
+    for rank_def in MOPS_FACTION_RANKS:
+        if db.get_rank_by_name(guild_id, rank_def['name']):
+            results.append(f'⏭️ Ranga "{rank_def["name"]}" już istnieje')
+            continue
+        fac    = alpha1_fac if rank_def['faction'] == 'Alpha-1' else nu7_fac
+        fac_id = fac['id'] if fac else None
+        # 'role' field holds the Discord role name (shared across factions)
+        discord_role_name = rank_def.get('role', rank_def['name'])
+        db.create_rank(
+            guild_id, rank_def['name'], rank_def['pts'],
+            role_id=role_map.get(discord_role_name),
+            color=rank_def['color'], icon=rank_def['icon'],
+            description=rank_def['description'],
+            is_special=rank_def['special'],
+            is_owner_only=rank_def['owner_only'],
+            faction_id=fac_id,
+        )
+        results.append(f'✅ Ranga frakcyjna: {rank_def["icon"]} {rank_def["name"]}')
+
+    # ── 6. Jobs ───────────────────────────────────────────────────────────────
+    for job_def in MOPS_JOBS:
+        if not db.get_job_by_name(guild_id, job_def['name']):
+            db.create_job(
+                guild_id, job_def['name'], job_def['pts'],
+                icon=job_def['icon'], color=job_def['color'],
+                description=job_def['description'],
+                role_id=role_map.get(job_def['name']),
+            )
+            results.append(f'✅ Praca: {job_def["icon"]} {job_def["name"]}')
+        else:
+            results.append(f'⏭️ Praca "{job_def["name"]}" już istnieje')
+
+    # ── 7. Guild config ───────────────────────────────────────────────────────
+    admin_ids = [rid for rid in [
+        role_map.get('Military Police'),
+        role_map.get('Alpha-1'),
+    ] if rid]
+    updates = {'admin_role_ids': json.dumps(admin_ids)}
+    for cfg_key, ch_name in [
+        ('clock_channel_id',          'apel'),
+        ('log_channel_id',            'logi'),
+        ('command_panel_channel_id',  'panel'),
+        ('job_channel_id',            'prace'),
+    ]:
+        if ch_name in ch_map:
+            updates[cfg_key] = ch_map[ch_name]
+    db.update_guild(guild_id, **updates)
+    results.append('✅ Konfiguracja bota zaktualizowana')
+
+    # ── 8. Clock panel → #apel ────────────────────────────────────────────────
+    apel_ch_id = ch_map.get('apel')
+    if apel_ch_id:
+        from datetime import date as _date
+        stats    = db.get_guild_stats(guild_id)
+        now      = datetime.now()
+        day_name = db.DAYS_PL[now.weekday()]
+        clock_embed = {
+            'title': '📋 Codzienny Apel – Baza MOPS',
+            'description': (
+                f'**{day_name}, {now.strftime("%d.%m.%Y")}**\n\n'
+                '━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+                '🟢 **Clock In** — Zacznij sesję aktywności\n'
+                '🔴 **Clock Out** — Zakończ sesję aktywności\n'
+                '━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'
+                '> Punkty przyznawane za każdą godzinę aktywności.\n'
+                '> Pamiętaj żeby się wylogować po zakończeniu!\n\n'
+                f'👥 Aktywnych teraz: **{stats.get("active_now", 0)}**\n'
+                f'⚠️ Ostrzeżenia (serwer): **{stats.get("warning_count", 0)}**'
+            ),
+            'color': 0x2ECC71,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'footer': {'text': 'System Rang MOPS • Punkty za aktywność'},
+        }
+        clock_components = [{'type': 1, 'components': [
+            {'type': 2, 'style': 3, 'label': '🟢 Clock In',  'custom_id': 'mops_clock_in'},
+            {'type': 2, 'style': 4, 'label': '🔴 Clock Out', 'custom_id': 'mops_clock_out'},
+        ]}]
+        data, err = _dpost(f'/channels/{apel_ch_id}/messages',
+                           {'embeds': [clock_embed], 'components': clock_components})
+        if data and data.get('id'):
+            db.save_daily_embed(guild_id, apel_ch_id, int(data['id']),
+                                _date.today().isoformat())
+            results.append('✅ Panel apelu wysłany do #apel')
+        else:
+            results.append(f'❌ Błąd wysyłania panelu apelu: {err}')
+
+    # ── 9. Job panel → #prace ─────────────────────────────────────────────────
+    prace_ch_id = ch_map.get('prace')
+    if prace_ch_id:
+        jobs_list = db.get_jobs(guild_id)
+        if jobs_list:
+            lines = [
+                f'**{j["icon"]} {j["name"]}** – `{j["required_points"]:.0f} pkt`'
+                + (f' – *{j["description"]}*' if j.get('description') else '')
+                for j in jobs_list
+            ]
+            job_desc = ('Zdobądź wymaganą liczbę punktów i kliknij **Wybierz pracę**!\n\n'
+                        + '\n'.join(lines))
+        else:
+            job_desc = 'Zdobądź wymaganą liczbę punktów i kliknij **Wybierz pracę**!'
+        job_embed = {
+            'title': '💼 Lista Prac – MOPS',
+            'description': job_desc,
+            'color': 0x7289DA,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'footer': {'text': 'Możesz posiadać kilka prac jednocześnie • Cywile only'},
+        }
+        job_components = [{'type': 1, 'components': [
+            {'type': 2, 'style': 3, 'label': '💼 Wybierz pracę',
+             'custom_id': 'mops_job_select'},
+            {'type': 2, 'style': 4, 'label': '🚪 Zrezygnuj z pracy',
+             'custom_id': 'mops_job_deselect'},
+            {'type': 2, 'style': 2, 'label': '📋 Moje prace',
+             'custom_id': 'mops_job_list'},
+        ]}]
+        data, err = _dpost(f'/channels/{prace_ch_id}/messages',
+                           {'embeds': [job_embed], 'components': job_components})
+        if data and data.get('id'):
+            db.save_panel_embed(guild_id, prace_ch_id, int(data['id']), 'jobs')
+            results.append('✅ Panel prac wysłany do #prace')
+        else:
+            results.append(f'❌ Błąd wysyłania panelu prac: {err}')
+
+    # ── 10. Auto-connect ALL existing DB ranks to Discord roles ──────────────
+    # Build a complete DB-rank-name → Discord-role-id mapping
+    rank_to_discord = {}
+    for sr in MOPS_SPECIAL_RANKS:
+        if sr['name'] in role_map:
+            rank_to_discord[sr['name']] = role_map[sr['name']]
+    for fr in MOPS_FACTION_RANKS:
+        discord_role_name = fr.get('role', fr['name'])
+        if discord_role_name in role_map:
+            rank_to_discord[fr['name']] = role_map[discord_role_name]
+
+    all_db_ranks = db.get_ranks(guild_id)
+    connected = 0
+    for rank in all_db_ranks:
+        # First check explicit mapping, then fall back to direct name match
+        new_role_id = rank_to_discord.get(rank['name']) or role_map.get(rank['name'])
+        if new_role_id and rank.get('role_id') != new_role_id:
+            db.update_rank(rank['id'], role_id=new_role_id)
+            connected += 1
+    results.append(f'✅ Auto-połączono {connected} rang z rolami Discord')
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    errors  = sum(1 for r in results if r.startswith('❌'))
+    skipped = sum(1 for r in results if r.startswith('⏭️'))
+    created = sum(1 for r in results if r.startswith('✅'))
+    if errors == 0:
+        flash(f'✅ Auto-Setup zakończony! Stworzono: {created}, pominięto: {skipped}.', 'success')
+    else:
+        flash(
+            f'⚠️ Setup zakończony z błędami. Stworzono: {created}, '
+            f'błędów: {errors}, pominięto: {skipped}. '
+            f'Sprawdź czy bot ma uprawnienia Zarządzaj Rolami i Kanałami.',
+            'warning')
+    return redirect(url_for('guild_overview', guild_id=guild_id))
 
 
 # ─── Logs ─────────────────────────────────────────────────────────────────────
