@@ -100,6 +100,7 @@ app.jinja_env.filters['fmtdt']     = _fmt
 app.jinja_env.filters['r2']        = lambda x: round(float(x or 0), 2)
 app.jinja_env.filters['from_json'] = lambda s: json.loads(s) if s else []
 app.jinja_env.filters['hex_color'] = lambda x: f'#{int(x):06X}'
+app.jinja_env.filters['bitand']    = lambda x, mask: int(x or 0) & int(mask)
 
 
 # ─── Auth ─────────────────────────────────────────────────────────────────────

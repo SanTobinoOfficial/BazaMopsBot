@@ -85,12 +85,12 @@
                 {% if p == 8 %}
                   <span class="badge bg-danger bg-opacity-50 text-danger">👑 Administrator</span>
                 {% elif p > 0 %}
-                  {% if p & 2 %}<span class="badge bg-warning bg-opacity-20 text-warning me-1" style="font-size:.6rem">Kick</span>{% endif %}
-                  {% if p & 4 %}<span class="badge bg-warning bg-opacity-20 text-warning me-1" style="font-size:.6rem">Ban</span>{% endif %}
-                  {% if p & 8192 %}<span class="badge bg-info bg-opacity-20 text-info me-1" style="font-size:.6rem">Manage Msg</span>{% endif %}
-                  {% if p & 4194304 %}<span class="badge bg-secondary me-1" style="font-size:.6rem">Mute</span>{% endif %}
-                  {% if p & 16777216 %}<span class="badge bg-secondary me-1" style="font-size:.6rem">Move</span>{% endif %}
-                  {% if p & 256 %}<span class="badge bg-secondary me-1" style="font-size:.6rem">Priority</span>{% endif %}
+                  {% if p | bitand(2) %}<span class="badge bg-warning bg-opacity-20 text-warning me-1" style="font-size:.6rem">Kick</span>{% endif %}
+                  {% if p | bitand(4) %}<span class="badge bg-warning bg-opacity-20 text-warning me-1" style="font-size:.6rem">Ban</span>{% endif %}
+                  {% if p | bitand(8192) %}<span class="badge bg-info bg-opacity-20 text-info me-1" style="font-size:.6rem">Manage Msg</span>{% endif %}
+                  {% if p | bitand(4194304) %}<span class="badge bg-secondary me-1" style="font-size:.6rem">Mute</span>{% endif %}
+                  {% if p | bitand(16777216) %}<span class="badge bg-secondary me-1" style="font-size:.6rem">Move</span>{% endif %}
+                  {% if p | bitand(256) %}<span class="badge bg-secondary me-1" style="font-size:.6rem">Priority</span>{% endif %}
                 {% else %}
                   <span class="text-muted">—</span>
                 {% endif %}
