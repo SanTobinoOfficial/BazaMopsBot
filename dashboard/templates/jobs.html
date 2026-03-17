@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+{% block title %}Prace – {{ guild_name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-briefcase me-2"></i>Prace – {{ guild_name }}</h4>
+  <div class="d-flex gap-2">
+    {% if jobs %}
+    <form method="POST" action="{{ url_for('balance_jobs', guild_id=guild_id) }}"
+          onsubmit="return confirm('Automatycznie ustawić zbalansowane bonusy pkt/h dla wszystkich prac?\n\nFormuła: sqrt(wymagane_pkt / max_pkt) × stawka_bazowa\nMaksymalny bonus = stawka bazowa serwera.')">
+      <button type="submit" class="btn btn-sm btn-outline-warning">
+        <i class="bi bi-lightning-charge me-1"></i>Zbalansuj zarobki
+      </button>
+    </form>
+    {% endif %}
+    <button class="btn btn-sm btn-discord" data-bs-toggle="modal" data-bs-target="#createModal">
+      <i class="bi bi-plus-lg me-1"></i>Nowa praca
+    </button>
+  </div>
+</div>
+
+<div class="alert alert-secondary small mb-3">
+  <i class="bi bi-info-circle me-1"></i>
+  Cywile (bez frakcji) mogą samodzielnie wybierać prace na kanale z panelem.
+  Admini mogą nadawać prace komukolwiek przez <code>.givejob @user &lt;praca&gt;</code>.
+  Panel: <code>.setjobchannel #kanał</code> → <code>.jobpanel</code><br>
+  <i class="bi bi-coin me-1 text-warning"></i>
+  <strong class="text-white">Bonus pkt/h</strong> – każda praca może dawać dodatkowe punkty za godzinę clock-in na wierzchu podstawowej stawki serwera.
+</div>
+
+{% if not jobs %}
+<div class="card p-4 text-center text-muted">
+  <i class="bi bi-briefcase fs-1 mb-2 d-block"></i>
+  <div>Brak prac. Kliknij <strong>Nowa praca</strong> albo użyj komendy
+    <code>.createjob &lt;nazwa&gt; &lt;punkty&gt; [ikona] [#kolor] [opis]</code>
+  </div>
+</div>
+{% else %}
+<div class="row g-3">
+  {% for j in jobs %}
+  {% set j_color = j.color or '#7289da' %}
+  <div class="col-md-6 col-xl-4">
+    <div class="card h-100" style="border-left:4px solid {{ j_color }}">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start mb-2">
+          <h5 class="mb-0">{{ j.icon }} {{ j.name }}</h5>
+          <div class="d-flex gap-1">
+            <button class="btn btn-sm btn-outline-secondary"
+                    onclick="openEditJob({{ j.id }}, '{{ j.name|e }}', {{ j.required_points }}, '{{ j.icon|e }}', '{{ j_color }}', '{{ j.description|e }}', {{ j.role_id or 'null' }}, {{ j.points_bonus_per_hour or 0 }})">
+              <i class="bi bi-pencil"></i>
+            </button>
+            <form method="POST"
+                  action="{{ url_for('job_delete', guild_id=guild_id, job_id=j.id) }}"
+                  onsubmit="return confirm('Usunąć pracę {{ j.name }}? Wszyscy pracownicy stracą ją.')">
+              <button class="btn btn-sm btn-outline-danger" type="submit">
+                <i class="bi bi-trash"></i>
+              </button>
+            </form>
+          </div>
+        </div>
+
+        {% if j.description %}
+        <p class="text-muted small mb-2">{{ j.description }}</p>
+        {% endif %}
+
+        <div class="d-flex gap-3 small mb-2 flex-wrap">
+          <span><i class="bi bi-star me-1"></i><strong>{{ j.required_points | int }} pkt</strong> wymagane</span>
+          {% if j.points_bonus_per_hour %}
+          <span class="text-warning fw-semibold">
+            <i class="bi bi-coin me-1"></i>+{{ j.points_bonus_per_hour | round(1) }} pkt/h
+          </span>
+          {% endif %}
+          {% if j.role_id %}
+          <span class="text-muted"><i class="bi bi-person-badge me-1"></i>Rola: {{ j.role_id }}</span>
+          {% endif %}
+        </div>
+
+        {# Members #}
+        {% set members = job_members.get(j.id, []) %}
+        <div class="mb-1">
+          <small class="text-muted">
+            <i class="bi bi-people me-1"></i>Pracownicy ({{ members | length }})
+          </small>
+        </div>
+        {% if members %}
+        <div style="max-height:120px;overflow-y:auto" class="small">
+          {% for mem in members %}
+          <div class="d-flex justify-content-between py-0">
+            <span>{{ mem.display_name }}{% if mem.admin_granted %} <span class="badge bg-secondary" style="font-size:0.65em">admin</span>{% endif %}</span>
+            <span class="text-muted">{{ mem.points | round(0) | int }} pkt</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <small class="text-muted fst-italic">Brak pracowników</small>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{# ── Create modal ──────────────────────────────────────────────────────────── #}
+<div class="modal fade" id="createModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>Nowa praca</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST" action="{{ url_for('job_create', guild_id=guild_id) }}">
+        <div class="modal-body row g-3">
+          <div class="col-8">
+            <label class="form-label">Nazwa *</label>
+            <input type="text" name="name" class="form-control" required placeholder="np. Farmer">
+          </div>
+          <div class="col-4">
+            <label class="form-label">Ikona</label>
+            <input type="text" name="icon" class="form-control" value="💼" placeholder="💼">
+          </div>
+          <div class="col-6">
+            <label class="form-label">Wymagane punkty</label>
+            <input type="number" name="required_points" class="form-control" value="0" min="0" step="0.1">
+          </div>
+          <div class="col-6">
+            <label class="form-label">Kolor</label>
+            <input type="color" name="color" class="form-control form-control-color" value="#7289da">
+          </div>
+          <div class="col-12">
+            <label class="form-label">
+              <i class="bi bi-coin text-warning me-1"></i>Bonus pkt/h (clock-in)
+            </label>
+            <div class="input-group">
+              <span class="input-group-text">+</span>
+              <input type="number" name="points_bonus_per_hour" class="form-control"
+                     value="0" min="0" step="0.5" placeholder="0">
+              <span class="input-group-text">pkt/h</span>
+            </div>
+            <div class="form-text">Dodatkowe punkty na godzinę clock-in ponad podstawową stawkę serwera.</div>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Rola Discord (opcjonalna)</label>
+            <select name="role_id" class="form-select">
+              <option value="">— brak roli —</option>
+              {% for r in guild_roles | sort(attribute='name') %}
+              <option value="{{ r.id }}">{{ r.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Opis</label>
+            <input type="text" name="description" class="form-control" placeholder="Opcjonalny opis pracy">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Anuluj</button>
+          <button type="submit" class="btn btn-discord">Utwórz</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{# ── Edit modal ────────────────────────────────────────────────────────────── #}
+<div class="modal fade" id="editModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Edytuj pracę</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="editForm" method="POST" action="">
+        <div class="modal-body row g-3">
+          <div class="col-8">
+            <label class="form-label">Nazwa *</label>
+            <input type="text" id="editName" name="name" class="form-control" required>
+          </div>
+          <div class="col-4">
+            <label class="form-label">Ikona</label>
+            <input type="text" id="editIcon" name="icon" class="form-control">
+          </div>
+          <div class="col-6">
+            <label class="form-label">Wymagane punkty</label>
+            <input type="number" id="editPoints" name="required_points" class="form-control" min="0" step="0.1">
+          </div>
+          <div class="col-6">
+            <label class="form-label">Kolor</label>
+            <input type="color" id="editColor" name="color" class="form-control form-control-color">
+          </div>
+          <div class="col-12">
+            <label class="form-label">
+              <i class="bi bi-coin text-warning me-1"></i>Bonus pkt/h (clock-in)
+            </label>
+            <div class="input-group">
+              <span class="input-group-text">+</span>
+              <input type="number" id="editBonus" name="points_bonus_per_hour"
+                     class="form-control" min="0" step="0.5">
+              <span class="input-group-text">pkt/h</span>
+            </div>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Rola Discord</label>
+            <select id="editRole" name="role_id" class="form-select">
+              <option value="">— brak roli —</option>
+              {% for r in guild_roles | sort(attribute='name') %}
+              <option value="{{ r.id }}">{{ r.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Opis</label>
+            <input type="text" id="editDesc" name="description" class="form-control">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Anuluj</button>
+          <button type="submit" class="btn btn-discord">Zapisz</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+function openEditJob(id, name, points, icon, color, desc, roleId, bonus) {
+  document.getElementById('editForm').action =
+    '/guild/{{ guild_id }}/jobs/' + id + '/edit';
+  document.getElementById('editName').value   = name;
+  document.getElementById('editPoints').value = points;
+  document.getElementById('editIcon').value   = icon;
+  document.getElementById('editColor').value  = color;
+  document.getElementById('editDesc').value   = desc;
+  document.getElementById('editBonus').value  = bonus || 0;
+  const roleSelect = document.getElementById('editRole');
+  for (let opt of roleSelect.options) {
+    opt.selected = roleId && opt.value == String(roleId);
+  }
+  new bootstrap.Modal(document.getElementById('editModal')).show();
+}
+</script>
+{% endblock %}

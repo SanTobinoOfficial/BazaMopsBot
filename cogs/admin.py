@@ -55,6 +55,24 @@ class AdminCog(commands.Cog):
             'setowner':        self._cmd_setowner,
             'setwarnlimit':    self._cmd_setwarnlimit,
             'setmaxhours':     self._cmd_setmaxhours,
+            # Factions
+            'createfaction':      self._cmd_createfaction,
+            'deletefaction':      self._cmd_deletefaction,
+            'editfaction':        self._cmd_editfaction,
+            'addfactionrole':     self._cmd_addfactionrole,
+            'removefactionrole':  self._cmd_removefactionrole,
+            'factions':           self._cmd_factions,
+            'assignfaction':      self._cmd_assignfaction,
+            'removefaction':      self._cmd_removefaction,
+            # Jobs
+            'createjob':          self._cmd_createjob,
+            'deletejob':          self._cmd_deletejob,
+            'editjob':            self._cmd_editjob,
+            'jobs':               self._cmd_jobs,
+            'givejob':            self._cmd_givejob,
+            'takejob':            self._cmd_takejob,
+            'setjobchannel':      self._cmd_setjobchannel,
+            'jobpanel':           self._cmd_jobpanel,
         }
 
     # ── Permission helpers ────────────────────────────────────────────────────
@@ -137,6 +155,44 @@ class AdminCog(commands.Cog):
             return
         await self._handlers[cmd](message, args)
 
+    # ── Discord role sync helper ───────────────────────────────────────────────
+
+    async def _sync_rank_role(self, member: discord.Member, old_role_id):
+        """After a points change, swap old auto-rank role for the new one on Discord."""
+        gid = member.guild.id
+        new_rank    = db.get_user_auto_rank(member.id, gid)
+        new_role_id = new_rank.get('role_id') if new_rank else None
+        if old_role_id == new_role_id:
+            return
+        try:
+            if old_role_id:
+                old_role = member.guild.get_role(old_role_id)
+                if old_role and old_role in member.roles:
+                    await member.remove_roles(old_role, reason='Auto-sync rangi po zmianie punktów')
+            if new_role_id:
+                new_role = member.guild.get_role(new_role_id)
+                if new_role and new_role not in member.roles:
+                    await member.add_roles(new_role, reason='Auto-sync rangi po zmianie punktów')
+        except discord.Forbidden:
+            pass
+
+    def _user_status_fields(self, member: discord.Member) -> dict:
+        """Build extra embed fields showing faction, current rank, Discord roles."""
+        gid  = member.guild.id
+        rank = db.get_user_auto_rank(member.id, gid)
+        fm   = db.get_user_faction_membership(member.id, gid)
+        # top 5 server roles (excluding @everyone, sorted by position desc)
+        roles = sorted(
+            [r for r in member.roles if r.name != '@everyone'],
+            key=lambda r: r.position, reverse=True
+        )[:5]
+        fields: dict = {}
+        fields['⭐ Ranga'] = (f'{rank["icon"]} {rank["name"]}' if rank else 'Cywil (brak rangi)')
+        if fm:
+            fields['⚔️ Frakcja'] = f'{fm["faction_icon"]} {fm["faction_name"]}'
+        fields['🎭 Role DC'] = ' '.join(r.mention for r in roles) if roles else '—'
+        return fields
+
     # ── Points ────────────────────────────────────────────────────────────────
 
     async def _cmd_addpoints(self, msg, args):
@@ -152,10 +208,18 @@ class AdminCog(commands.Cog):
             await msg.reply(embed=_err('Nieprawidłowa liczba.'), mention_author=False); return
         note = ' '.join(args[2:]) if len(args) > 2 else 'Ręczne dodanie przez admina'
         db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
+        # Capture old auto-rank before change for Discord sync
+        _old_rank    = db.get_user_auto_rank(m.id, msg.guild.id)
+        _old_role_id = _old_rank.get('role_id') if _old_rank else None
         new = db.add_points(m.id, msg.guild.id, pts, note=note,
                             transaction_type='manual', assigned_by=msg.author.id)
+        await self._sync_rank_role(m, _old_role_id)
+        # Build reply embed with user status
         e = _ok(f'**+{pts:.1f} pkt** → **{m.display_name}** | Stan: **{new:.1f} pkt**')
-        e.add_field(name='📝 Nota', value=note)
+        e.set_thumbnail(url=m.display_avatar.url)
+        e.add_field(name='📝 Nota', value=note, inline=False)
+        for name, val in self._user_status_fields(m).items():
+            e.add_field(name=name, value=val, inline=True)
         e.set_footer(text=f'Przez: {msg.author.display_name}')
         await msg.reply(embed=e, mention_author=False)
         db.log_action(msg.guild.id, 'points_add', user_id=m.id, actor_id=msg.author.id,
@@ -177,10 +241,17 @@ class AdminCog(commands.Cog):
             await msg.reply(embed=_err('Nieprawidłowa liczba.'), mention_author=False); return
         note = ' '.join(args[2:]) if len(args) > 2 else 'Ręczne odjęcie przez admina'
         db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
+        _old_rank    = db.get_user_auto_rank(m.id, msg.guild.id)
+        _old_role_id = _old_rank.get('role_id') if _old_rank else None
         new = db.add_points(m.id, msg.guild.id, -pts, note=note,
                             transaction_type='manual', assigned_by=msg.author.id)
+        await self._sync_rank_role(m, _old_role_id)
         e = _ok(f'**-{pts:.1f} pkt** ← **{m.display_name}** | Stan: **{new:.1f} pkt**')
-        e.add_field(name='📝 Nota', value=note)
+        e.set_thumbnail(url=m.display_avatar.url)
+        e.add_field(name='📝 Nota', value=note, inline=False)
+        for name, val in self._user_status_fields(m).items():
+            e.add_field(name=name, value=val, inline=True)
+        e.set_footer(text=f'Przez: {msg.author.display_name}')
         await msg.reply(embed=e, mention_author=False)
         await send_log(msg.guild, log_embed('💸 Punkty odjęte', ORANGE,
             Użytkownik=m.mention, Zmiana=f'-{pts:.1f}',
@@ -198,9 +269,16 @@ class AdminCog(commands.Cog):
             await msg.reply(embed=_err('Nieprawidłowa liczba.'), mention_author=False); return
         note = ' '.join(args[2:]) if len(args) > 2 else 'Ustawienie przez admina'
         db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
+        _old_rank    = db.get_user_auto_rank(m.id, msg.guild.id)
+        _old_role_id = _old_rank.get('role_id') if _old_rank else None
         new = db.set_points(m.id, msg.guild.id, pts, note=note, assigned_by=msg.author.id)
-        await msg.reply(embed=_ok(f'Ustawiono **{pts:.1f} pkt** dla **{m.display_name}**'),
-                        mention_author=False)
+        await self._sync_rank_role(m, _old_role_id)
+        e = _ok(f'Ustawiono **{pts:.1f} pkt** dla **{m.display_name}**')
+        e.set_thumbnail(url=m.display_avatar.url)
+        for name, val in self._user_status_fields(m).items():
+            e.add_field(name=name, value=val, inline=True)
+        e.set_footer(text=f'Przez: {msg.author.display_name}')
+        await msg.reply(embed=e, mention_author=False)
         await send_log(msg.guild, log_embed('📊 Punkty ustawione', BLURPLE,
             Użytkownik=m.mention, **{'Nowy stan': f'{new:.1f}'}, Nota=note,
             Przez=msg.author.mention))
@@ -299,6 +377,10 @@ class AdminCog(commands.Cog):
     # ── Ranks ─────────────────────────────────────────────────────────────────
 
     async def _cmd_giverank(self, msg, args):
+        """Gives any rank (special or auto) to a member.
+        For auto-ranks, points are raised to the required threshold.
+        Usage: .giverank @user <nazwa rangi> [nota]
+        """
         if len(args) < 2:
             await msg.reply(embed=_err('`.giverank @user <nazwa rangi> [nota]`'),
                             mention_author=False); return
@@ -315,38 +397,50 @@ class AdminCog(commands.Cog):
         if not rank:
             await msg.reply(embed=_err('Nie znaleziono rangi. Użyj `.ranks`.'),
                             mention_author=False); return
-        if not rank['is_special']:
-            await msg.reply(embed=_warn('To automatyczna ranga – nie można nadawać ręcznie.'),
-                            mention_author=False); return
-        if not await self._can_grant_rank(msg.author, msg.guild.id, rank):
-            if rank.get('is_owner_only'):
-                await msg.reply(embed=_err('Ta ranga jest **tylko dla właściciela serwera/dowódcy**.'),
-                                mention_author=False)
-            else:
-                await msg.reply(embed=_err('Twoja rola nie ma uprawnień do nadawania tej rangi.'),
-                                mention_author=False)
-            return
 
         db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
-        ok = db.give_special_rank(m.id, msg.guild.id, rank['id'],
-                                  assigned_by=msg.author.id, note=note)
-        if not ok:
-            await msg.reply(embed=_warn(f'**{m.display_name}** już posiada tę rangę.'),
-                            mention_author=False); return
 
-        badge = '👑' if rank.get('is_owner_only') else '🎖️'
-        e = _ok(f'{badge} Nadano rangę **{rank["icon"]} {rank["name"]}** → **{m.display_name}**')
+        if rank.get('is_special') or rank.get('is_owner_only'):
+            # ── Special / owner rank ──────────────────────────────────────────
+            if not await self._can_grant_rank(msg.author, msg.guild.id, rank):
+                key = 'Ta ranga jest **tylko dla właściciela/dowódcy**.' if rank.get('is_owner_only') \
+                      else 'Twoja rola nie ma uprawnień do nadawania tej rangi.'
+                await msg.reply(embed=_err(key), mention_author=False); return
+            ok = db.give_special_rank(m.id, msg.guild.id, rank['id'],
+                                      assigned_by=msg.author.id, note=note)
+            if not ok:
+                await msg.reply(embed=_warn(f'**{m.display_name}** już posiada tę rangę.'),
+                                mention_author=False); return
+            if rank.get('role_id'):
+                role = msg.guild.get_role(rank['role_id'])
+                if role:
+                    try: await m.add_roles(role, reason=f'Ranga spec.: {rank["name"]}')
+                    except discord.Forbidden: pass
+            badge = '👑' if rank.get('is_owner_only') else '🎖️'
+            e = _ok(f'{badge} Nadano rangę **{rank["icon"]} {rank["name"]}** → **{m.display_name}**')
+        else:
+            # ── Auto-rank: raise points to threshold + sync Discord role ──────
+            req_pts = rank.get('required_points', 0)
+            _old    = db.get_user_auto_rank(m.id, msg.guild.id)
+            _old_id = _old.get('role_id') if _old else None
+            user    = db.get_user(m.id, msg.guild.id)
+            cur_pts = user.get('points', 0) if user else 0
+            if cur_pts < req_pts:
+                full_note = f'Admin nadał rangę: {rank["name"]}' + (f' – {note}' if note else '')
+                db.set_points(m.id, msg.guild.id, req_pts,
+                              note=full_note, assigned_by=msg.author.id)
+            await self._sync_rank_role(m, _old_id)
+            badge = '🤖'
+            e = _ok(f'🤖 Ustawiono rangę **{rank["icon"]} {rank["name"]}** → **{m.display_name}**\n'
+                    f'Punkty: **{max(cur_pts, req_pts):.0f}** pkt')
+
         if note:
-            e.add_field(name='📝 Nota', value=note)
+            e.add_field(name='📝 Nota', value=note, inline=False)
+        e.set_thumbnail(url=m.display_avatar.url)
+        for name, val in self._user_status_fields(m).items():
+            e.add_field(name=name, value=val, inline=True)
+        e.set_footer(text=f'Przez: {msg.author.display_name}')
         await msg.reply(embed=e, mention_author=False)
-
-        if rank.get('role_id'):
-            role = msg.guild.get_role(rank['role_id'])
-            if role:
-                try:
-                    await m.add_roles(role, reason=f'Ranga: {rank["name"]}')
-                except discord.Forbidden:
-                    pass
         db.log_action(msg.guild.id, 'rank_give', user_id=m.id, actor_id=msg.author.id,
                       details={'rank': rank['name'], 'note': note})
         await send_log(msg.guild, log_embed(f'{badge} Ranga Nadana', GOLD,
@@ -388,15 +482,17 @@ class AdminCog(commands.Cog):
 
     async def _cmd_createrank(self, msg, args):
         """
-        .createrank <nazwa> <punkty|SPECIAL|UNIT> [ikona] [#kolor] [opis]
+        .createrank <nazwa> <punkty|SPECIAL|UNIT> [FRAKCJA:<nazwa>] [ikona] [#kolor] [opis]
         SPECIAL = ranga specjalna (admin może nadawać)
         UNIT    = jednostka (tylko właściciel/dowódca może nadawać)
+        FRAKCJA:<nazwa> = przypisz rangę do frakcji (tylko dla rang automatycznych)
         """
         if len(args) < 2:
             await msg.reply(embed=_err(
-                '`.createrank <nazwa> <punkty|SPECIAL|UNIT> [ikona] [#kolor] [opis]`\n'
+                '`.createrank <nazwa> <punkty|SPECIAL|UNIT> [FRAKCJA:<nazwa>] [ikona] [#kolor] [opis]`\n'
                 '`SPECIAL` = ranga specjalna (admin)\n'
-                '`UNIT` = jednostka (tylko właściciel/dowódca)'
+                '`UNIT` = jednostka (tylko właściciel/dowódca)\n'
+                '`FRAKCJA:Alpha-1` = ranga należy do frakcji'
             ), mention_author=False); return
 
         name = args[0]
@@ -409,27 +505,49 @@ class AdminCog(commands.Cog):
             await msg.reply(embed=_err('Punkty muszą być liczbą, "SPECIAL" lub "UNIT".'),
                             mention_author=False); return
 
-        icon  = args[2] if len(args) > 2 else ('👑' if is_owner_only else ('🎖️' if is_special else '⭐'))
+        # Parse optional FRAKCJA: flag from remaining args
+        remaining = args[2:]
+        faction_id = None
+        faction_name_str = None
+        filtered = []
+        for a in remaining:
+            if a.upper().startswith('FRAKCJA:'):
+                faction_name_str = a[8:].strip()
+            else:
+                filtered.append(a)
+        remaining = filtered
+
+        if faction_name_str:
+            f = db.get_faction_by_name(msg.guild.id, faction_name_str)
+            if not f:
+                await msg.reply(embed=_err(f'Frakcja **{faction_name_str}** nie istnieje. Użyj `.createfaction`.'),
+                                mention_author=False); return
+            faction_id = f['id']
+
+        icon  = remaining[0] if remaining else ('👑' if is_owner_only else ('🎖️' if is_special else '⭐'))
         color = '#7289da'
         desc  = ''
-        if len(args) > 3:
-            if args[3].startswith('#'):
-                color = args[3]
-                desc = ' '.join(args[4:])
+        rest  = remaining[1:] if remaining else []
+        if rest:
+            if rest[0].startswith('#'):
+                color = rest[0]
+                desc = ' '.join(rest[1:])
             else:
-                desc = ' '.join(args[3:])
+                desc = ' '.join(rest)
 
         if db.get_rank_by_name(msg.guild.id, name):
             await msg.reply(embed=_err(f'Ranga **{name}** już istnieje.'), mention_author=False); return
 
         rank = db.create_rank(msg.guild.id, name, req_pts, color=color,
                               description=desc, icon=icon,
-                              is_special=is_special, is_owner_only=is_owner_only)
+                              is_special=is_special, is_owner_only=is_owner_only,
+                              faction_id=faction_id)
         if not rank:
             await msg.reply(embed=_err('Błąd tworzenia rangi.'), mention_author=False); return
 
         badge = '👑 UNIT' if is_owner_only else ('🎖️ SPECIAL' if is_special else f'🤖 AUTO ({req_pts:.0f} pkt)')
-        e = _ok(f'Utworzono rangę **{icon} {name}** [{badge}]')
+        faction_str = f' | ⚔️ {faction_name_str}' if faction_name_str else ''
+        e = _ok(f'Utworzono rangę **{icon} {name}** [{badge}{faction_str}]')
         if desc:
             e.add_field(name='Opis', value=desc)
         await msg.reply(embed=e, mention_author=False)
@@ -451,22 +569,41 @@ class AdminCog(commands.Cog):
         if len(args) < 3:
             await msg.reply(embed=_err(
                 '`.editrank <nazwa> <pole> <wartość>`\n'
-                'Pola: `name`, `points`, `icon`, `color`, `description`'
+                'Pola: `name`, `points`, `icon`, `color`, `description`, `category`, `faction`\n'
+                '`faction NONE` = usuń z frakcji | `faction Alpha-1` = przypisz do frakcji'
             ), mention_author=False); return
         rank = db.get_rank_by_name(msg.guild.id, args[0])
         if not rank:
             await msg.reply(embed=_err('Nie znaleziono rangi.'), mention_author=False); return
         field = args[1].lower()
         value = ' '.join(args[2:])
+
+        # Special case: faction field
+        if field == 'faction':
+            if value.upper() == 'NONE':
+                db.update_rank(rank['id'], faction_id=None)
+                await msg.reply(embed=_ok(f'Usunięto rangę **{rank["name"]}** z frakcji.'),
+                                mention_author=False)
+            else:
+                f = db.get_faction_by_name(msg.guild.id, value)
+                if not f:
+                    await msg.reply(embed=_err(f'Frakcja **{value}** nie istnieje.'),
+                                    mention_author=False); return
+                db.update_rank(rank['id'], faction_id=f['id'])
+                await msg.reply(embed=_ok(f'Przypisano **{rank["name"]}** do frakcji **{f["icon"]} {f["name"]}**.'),
+                                mention_author=False)
+            return
+
         fields_map = {
-            'name': ('name', lambda v: v),
-            'points': ('required_points', float),
-            'icon': ('icon', lambda v: v),
-            'color': ('color', lambda v: v),
-            'description': ('description', lambda v: v),
+            'name':        ('name',            lambda v: v),
+            'points':      ('required_points', float),
+            'icon':        ('icon',            lambda v: v),
+            'color':       ('color',           lambda v: v),
+            'description': ('description',     lambda v: v),
+            'category':    ('category',        lambda v: v),
         }
         if field not in fields_map:
-            await msg.reply(embed=_err('Pole: `name`, `points`, `icon`, `color`, `description`'),
+            await msg.reply(embed=_err('Pole: `name`, `points`, `icon`, `color`, `description`, `category`, `faction`'),
                             mention_author=False); return
         col, converter = fields_map[field]
         try:
@@ -477,22 +614,60 @@ class AdminCog(commands.Cog):
                         mention_author=False)
 
     async def _cmd_ranks(self, msg, args):
-        ranks = db.get_ranks(msg.guild.id)
-        if not ranks:
-            await msg.reply(embed=_warn('Brak rang. Użyj `.createrank`.'), mention_author=False); return
-        e = discord.Embed(title='⭐ Lista Rang', color=BLURPLE)
-        auto    = [r for r in ranks if not r['is_special']]
-        special = [r for r in ranks if r['is_special'] and not r['is_owner_only']]
-        units   = [r for r in ranks if r['is_owner_only']]
-        if auto:
-            e.add_field(name='🤖 Automatyczne', inline=False,
-                value='\n'.join(f'{r["icon"]} **{r["name"]}** – {r["required_points"]:.0f} pkt' for r in auto))
-        if special:
-            e.add_field(name='🎖️ Specjalne (admin)', inline=False,
-                value='\n'.join(f'{r["icon"]} **{r["name"]}**' + (f' – {r["description"]}' if r.get("description") else '') for r in special))
-        if units:
-            e.add_field(name='👑 Jednostki (tylko właściciel/dowódca)', inline=False,
-                value='\n'.join(f'{r["icon"]} **{r["name"]}**' + (f' – {r["description"]}' if r.get("description") else '') for r in units))
+        gid      = msg.guild.id
+        ranks    = db.get_ranks(gid)
+        factions = db.get_factions(gid)
+        if not ranks and not factions:
+            await msg.reply(embed=_warn('Brak rang. Użyj `.createrank`.'), mention_author=False)
+            return
+
+        # Build faction id→name map
+        fac_map = {f['id']: f for f in factions}
+
+        # Group ranks by category / faction / type
+        cats = {}
+        for r in ranks:
+            cat = r.get('category') or ''
+            if not cat:
+                fid = r.get('faction_id')
+                if fid and fid in fac_map:
+                    f = fac_map[fid]
+                    cat = f'{f["icon"]} {f["name"]}'
+                elif r.get('is_owner_only'):
+                    cat = '👑 Jednostki'
+                elif r.get('is_special'):
+                    cat = '🎖️ Specjalne'
+                else:
+                    cat = '🤖 Cywile'
+            cats.setdefault(cat, []).append(r)
+
+        e = discord.Embed(title=f'⭐ Lista Rang – {msg.guild.name}', color=BLURPLE)
+
+        for cat_name, cat_ranks in cats.items():
+            lines = []
+            for r in cat_ranks:
+                dot = '●'
+                if r.get('is_owner_only'):
+                    line = f'{dot} {r["icon"]} **{r["name"]}** 👑'
+                elif r.get('is_special'):
+                    line = f'{dot} {r["icon"]} **{r["name"]}**'
+                    if r.get('description'):
+                        line += f' – {r["description"]}'
+                else:
+                    line = f'{dot} {r["icon"]} **{r["name"]}** – `{r["required_points"]:.0f} pkt`'
+                lines.append(line)
+            e.add_field(name=f'─── {cat_name} ───', value='\n'.join(lines) or '—', inline=False)
+
+        if factions:
+            lines = []
+            for f in factions:
+                members = db.get_faction_members(gid, f['id'])
+                line = f'● {f["icon"]} **{f["name"]}** ({len(members)} czł.)'
+                if f.get('description'):
+                    line += f' – {f["description"]}'
+                lines.append(line)
+            e.add_field(name='─── ⚔️ Frakcje ───', value='\n'.join(lines), inline=False)
+
         await msg.reply(embed=e, mention_author=False)
 
     # ── User management ───────────────────────────────────────────────────────
@@ -527,34 +702,66 @@ class AdminCog(commands.Cog):
         if not m:
             await msg.reply(embed=_err('Nie znaleziono.'), mention_author=False); return
         db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
-        u = db.get_user(m.id, msg.guild.id)
-        rank = db.get_user_auto_rank(m.id, msg.guild.id)
-        specials = db.get_user_special_ranks(m.id, msg.guild.id)
-        warns = db.get_warnings(m.id, msg.guild.id)
-        txs = db.get_user_transactions(m.id, msg.guild.id, limit=5)
-        cfg = db.get_guild(msg.guild.id) or {}
+        u          = db.get_user(m.id, msg.guild.id)
+        rank       = db.get_user_auto_rank(m.id, msg.guild.id)
+        specials   = db.get_user_special_ranks(m.id, msg.guild.id)
+        warns      = db.get_warnings(m.id, msg.guild.id)
+        txs        = db.get_user_transactions(m.id, msg.guild.id, limit=5)
+        faction_mem= db.get_user_faction_membership(m.id, msg.guild.id)
+        cfg        = db.get_guild(msg.guild.id) or {}
+        warn_limit = cfg.get('warn_limit', 3)
+
+        # Collect all Discord roles (sorted by position, skip @everyone)
+        dc_roles = sorted(
+            [r for r in m.roles if r.name != '@everyone'],
+            key=lambda r: r.position, reverse=True
+        )
+
         e = discord.Embed(title=f'📋 Info: {m.display_name}', color=BLURPLE, timestamp=datetime.now())
         e.set_thumbnail(url=m.display_avatar.url)
-        e.add_field(name='💰 Punkty', value=f'{u["points"]:.1f}', inline=True)
-        e.add_field(name='⏱️ Godziny', value=f'{u["total_hours"]:.2f}h', inline=True)
-        e.add_field(name='📅 Sesje', value=str(u['sessions_count']), inline=True)
+
+        # ── Stats row ────────────────────────────────────────────────────────
+        e.add_field(name='💰 Punkty',  value=f'{u["points"]:.1f}',        inline=True)
+        e.add_field(name='⏱️ Godziny', value=f'{u["total_hours"]:.2f}h',  inline=True)
+        e.add_field(name='📅 Sesje',   value=str(u['sessions_count']),    inline=True)
+
+        # ── Faction ──────────────────────────────────────────────────────────
+        if faction_mem:
+            e.add_field(name='⚔️ Frakcja',
+                        value=f'{faction_mem["faction_icon"]} **{faction_mem["faction_name"]}**',
+                        inline=True)
+
+        # ── Rank row ─────────────────────────────────────────────────────────
         e.add_field(name='⭐ Ranga auto',
-                    value=f'{rank["icon"]} {rank["name"]}' if rank else 'Brak', inline=True)
+                    value=f'{rank["icon"]} {rank["name"]}' if rank else 'Cywil (brak rangi)',
+                    inline=True)
         e.add_field(name='🎖️ Rangi spec.',
-                    value=', '.join(f'{r["icon"]} {r["name"]}' for r in specials) or 'Brak', inline=True)
+                    value=', '.join(f'{r["icon"]} {r["name"]}' for r in specials) or 'Brak',
+                    inline=True)
+
+        # ── Status ───────────────────────────────────────────────────────────
         e.add_field(name='🟢 Aktywny',
                     value='Tak' if u['is_clocked_in'] else 'Nie', inline=True)
-        warn_limit = cfg.get('warn_limit', 3)
         e.add_field(name='⚠️ Ostrzeżenia',
                     value=f'{len(warns)}/{warn_limit}', inline=True)
         if u['is_banned']:
             e.add_field(name='🔨 Status', value='ZABLOKOWANY na lb', inline=True)
+
+        # ── Discord roles list ────────────────────────────────────────────────
+        if dc_roles:
+            roles_line = ' '.join(r.mention for r in dc_roles[:10])
+            if len(dc_roles) > 10:
+                roles_line += f' *+{len(dc_roles)-10}*'
+            e.add_field(name=f'🎭 Role Discord ({len(dc_roles)})', value=roles_line, inline=False)
+
+        # ── Recent transactions ───────────────────────────────────────────────
         if txs:
             lines = []
             for t in txs:
                 s = '+' if t['points_change'] > 0 else ''
                 lines.append(f'`{s}{t["points_change"]:.1f}` {(t["note"] or "")[:40]}')
             e.add_field(name='💸 Ostatnie transakcje', value='\n'.join(lines), inline=False)
+
         e.set_footer(text=f'ID: {m.id}')
         await msg.reply(embed=e, mention_author=False)
 
@@ -695,6 +902,662 @@ class AdminCog(commands.Cog):
                             mention_author=False)
         except ValueError:
             await msg.reply(embed=_err('Podaj liczbę godzin.'), mention_author=False)
+
+
+    # ── Factions ──────────────────────────────────────────────────────────────
+
+    async def _cmd_createfaction(self, msg, args):
+        """
+        .createfaction <nazwa> [ikona] [#kolor] [opis]
+        """
+        if not args:
+            await msg.reply(embed=_err(
+                '`.createfaction <nazwa> [ikona] [#kolor] [opis]`\n'
+                'Przykład: `.createfaction MR ⚔️ #ff5555 Frakcja MR`'
+            ), mention_author=False); return
+
+        name  = args[0]
+        icon  = args[1] if len(args) > 1 else '⚔️'
+        color = '#7289da'
+        desc  = ''
+        rest  = args[2:]
+        if rest and rest[0].startswith('#'):
+            color = rest[0]
+            desc  = ' '.join(rest[1:])
+        elif rest:
+            desc = ' '.join(rest)
+
+        if db.get_faction_by_name(msg.guild.id, name):
+            await msg.reply(embed=_err(f'Frakcja **{name}** już istnieje.'), mention_author=False); return
+
+        f = db.create_faction(msg.guild.id, name, icon=icon, color=color, description=desc)
+        if not f:
+            await msg.reply(embed=_err('Błąd tworzenia frakcji.'), mention_author=False); return
+        e = _ok(f'Utworzono frakcję **{icon} {name}**')
+        if desc:
+            e.add_field(name='Opis', value=desc)
+        e.add_field(name='Kolor', value=color)
+        e.set_footer(text='Dodaj role: .addfactionrole <frakcja> @rola')
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_deletefaction(self, msg, args):
+        if not args:
+            await msg.reply(embed=_err('`.deletefaction <nazwa>`'), mention_author=False); return
+        f = db.get_faction_by_name(msg.guild.id, ' '.join(args))
+        if not f:
+            await msg.reply(embed=_err('Nie znaleziono frakcji.'), mention_author=False); return
+        db.delete_faction(f['id'])
+        await msg.reply(embed=_ok(f'Usunięto frakcję **{f["icon"]} {f["name"]}**.'),
+                        mention_author=False)
+
+    async def _cmd_editfaction(self, msg, args):
+        """
+        .editfaction <nazwa> <pole> <wartość>
+        Pola: name, icon, color, description
+        """
+        if len(args) < 3:
+            await msg.reply(embed=_err(
+                '`.editfaction <nazwa> <pole> <wartość>`\n'
+                'Pola: `name`, `icon`, `color`, `description`'
+            ), mention_author=False); return
+        f = db.get_faction_by_name(msg.guild.id, args[0])
+        if not f:
+            await msg.reply(embed=_err('Nie znaleziono frakcji.'), mention_author=False); return
+        field = args[1].lower()
+        value = ' '.join(args[2:])
+        allowed = {'name', 'icon', 'color', 'description'}
+        if field not in allowed:
+            await msg.reply(embed=_err(f'Pole: {", ".join(f"`{a}`" for a in allowed)}'),
+                            mention_author=False); return
+        db.update_faction(f['id'], **{field: value})
+        await msg.reply(embed=_ok(f'Zaktualizowano **{f["name"]}**: `{field}` = `{value}`'),
+                        mention_author=False)
+
+    async def _cmd_addfactionrole(self, msg, args):
+        """
+        .addfactionrole <nazwa frakcji> @rola
+        """
+        if len(args) < 2:
+            await msg.reply(embed=_err('`.addfactionrole <frakcja> @rola`'), mention_author=False); return
+        f = db.get_faction_by_name(msg.guild.id, args[0])
+        if not f:
+            await msg.reply(embed=_err('Nie znaleziono frakcji.'), mention_author=False); return
+        rid = args[1].strip('<@&>').strip()
+        try:
+            rid = int(rid)
+        except ValueError:
+            await msg.reply(embed=_err('Nieprawidłowa rola.'), mention_author=False); return
+        role = msg.guild.get_role(rid)
+        if not role:
+            await msg.reply(embed=_err('Rola nie istnieje.'), mention_author=False); return
+        ids = json.loads(f['role_ids'] or '[]')
+        if rid not in ids:
+            ids.append(rid)
+        db.update_faction(f['id'], role_ids=ids)
+        await msg.reply(embed=_ok(f'Dodano {role.mention} do frakcji **{f["icon"]} {f["name"]}**.'),
+                        mention_author=False)
+
+    async def _cmd_removefactionrole(self, msg, args):
+        """
+        .removefactionrole <nazwa frakcji> @rola
+        """
+        if len(args) < 2:
+            await msg.reply(embed=_err('`.removefactionrole <frakcja> @rola`'), mention_author=False); return
+        f = db.get_faction_by_name(msg.guild.id, args[0])
+        if not f:
+            await msg.reply(embed=_err('Nie znaleziono frakcji.'), mention_author=False); return
+        rid = args[1].strip('<@&>').strip()
+        try:
+            rid = int(rid)
+        except ValueError:
+            await msg.reply(embed=_err('Nieprawidłowa rola.'), mention_author=False); return
+        ids = [i for i in json.loads(f['role_ids'] or '[]') if i != rid]
+        db.update_faction(f['id'], role_ids=ids)
+        await msg.reply(embed=_ok(f'Usunięto rolę z frakcji **{f["icon"]} {f["name"]}**.'),
+                        mention_author=False)
+
+    async def _cmd_factions(self, msg, args):
+        factions = db.get_factions(msg.guild.id)
+        if not factions:
+            await msg.reply(embed=_warn('Brak frakcji. Użyj `.createfaction`.'),
+                            mention_author=False); return
+        e = discord.Embed(title='⚔️ Frakcje', color=BLURPLE)
+        for f in factions:
+            members = db.get_faction_members(msg.guild.id, f['id'])
+            val = f'👥 Członków: **{len(members)}**'
+            if members:
+                top = members[:5]
+                names = []
+                for mem in top:
+                    member = msg.guild.get_member(mem['user_id'])
+                    nm = member.display_name if member else mem.get('display_name', str(mem['user_id']))
+                    names.append(f'{nm} ({mem["points"]:.0f} pkt)')
+                val += '\n' + ', '.join(names)
+                if len(members) > 5:
+                    val += f' *…+{len(members)-5}*'
+            if f.get('description'):
+                val += f'\n*{f["description"]}*'
+            e.add_field(name=f'{f["icon"]} {f["name"]}', value=val, inline=False)
+        e.set_footer(text='Przypisz: .assignfaction @user <frakcja> | Usuń: .removefaction @user')
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_assignfaction(self, msg, args):
+        """
+        .assignfaction @user <nazwa frakcji>
+        Przypisuje użytkownika do frakcji (jeden użytkownik = jedna frakcja).
+        """
+        if len(args) < 2:
+            await msg.reply(embed=_err('`.assignfaction @user <nazwa frakcji>`'),
+                            mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        faction_name = ' '.join(args[1:])
+        f = db.get_faction_by_name(msg.guild.id, faction_name)
+        if not f:
+            await msg.reply(embed=_err(f'Frakcja **{faction_name}** nie istnieje. Użyj `.factions`.'),
+                            mention_author=False); return
+        db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
+        ok = db.assign_faction_member(m.id, msg.guild.id, f['id'],
+                                      assigned_by=msg.author.id)
+        if not ok:
+            await msg.reply(embed=_err('Błąd przypisania do frakcji.'), mention_author=False); return
+
+        # Add faction marker roles + base Rekrut role to Discord member
+        role_added = []
+        try:
+            fac_role_ids = json.loads(f.get('role_ids') or '[]')
+            for rid in fac_role_ids:
+                role = msg.guild.get_role(int(rid))
+                if role:
+                    await m.add_roles(role, reason=f'Frakcja: {f["name"]}')
+                    role_added.append(role.mention)
+        except Exception:
+            pass
+        # Add Rekrut (lowest faction rank) Discord role
+        try:
+            all_ranks = db.get_ranks(msg.guild.id)
+            faction_ranks = sorted(
+                [r for r in all_ranks if r.get('faction_id') == f['id']
+                 and not r.get('is_special') and not r.get('is_owner_only')],
+                key=lambda r: r.get('required_points', 0)
+            )
+            if faction_ranks and faction_ranks[0].get('role_id'):
+                base_role = msg.guild.get_role(faction_ranks[0]['role_id'])
+                if base_role and base_role not in m.roles:
+                    await m.add_roles(base_role, reason=f'Wstęp do frakcji: {f["name"]}')
+                    role_added.append(base_role.mention)
+        except Exception:
+            pass
+
+        e = _ok(f'Przypisano **{m.display_name}** do frakcji **{f["icon"]} {f["name"]}**.')
+        if role_added:
+            e.add_field(name='🎭 Role Discord dodane', value=' '.join(role_added) or '—')
+        e.set_footer(text=f'Przez: {msg.author.display_name}')
+        await msg.reply(embed=e, mention_author=False)
+        db.log_action(msg.guild.id, 'faction_assign',
+                      user_id=m.id, actor_id=msg.author.id,
+                      details={'faction': f['name'], 'faction_id': f['id']})
+        await send_log(msg.guild, log_embed('⚔️ Frakcja Przypisana', BLURPLE,
+            Użytkownik=m.mention,
+            Frakcja=f'{f["icon"]} {f["name"]}',
+            Przez=msg.author.mention))
+
+    async def _cmd_removefaction(self, msg, args):
+        """
+        .removefaction @user
+        Usuwa użytkownika z jego frakcji i usuwa powiązane role Discord.
+        """
+        if not args:
+            await msg.reply(embed=_err('`.removefaction @user`'), mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        # Get current faction before removing
+        fm = db.get_user_faction_membership(m.id, msg.guild.id)
+        if not fm:
+            await msg.reply(embed=_warn(f'**{m.display_name}** nie jest w żadnej frakcji.'),
+                            mention_author=False); return
+        ok = db.remove_faction_member(m.id, msg.guild.id)
+        if not ok:
+            await msg.reply(embed=_err('Błąd usuwania z frakcji.'), mention_author=False); return
+
+        # Remove faction marker roles + all faction rank roles from Discord
+        roles_removed = []
+        try:
+            faction = db.get_faction_by_id(fm['faction_id'])
+            if faction:
+                fac_role_ids = json.loads(faction.get('role_ids') or '[]')
+                for rid in fac_role_ids:
+                    role = msg.guild.get_role(int(rid))
+                    if role and role in m.roles:
+                        await m.remove_roles(role, reason=f'Usunięto z frakcji: {fm["faction_name"]}')
+                        roles_removed.append(role.mention)
+        except Exception:
+            pass
+        try:
+            all_ranks = db.get_ranks(msg.guild.id)
+            for r in all_ranks:
+                if r.get('faction_id') == fm['faction_id'] and r.get('role_id'):
+                    role = msg.guild.get_role(r['role_id'])
+                    if role and role in m.roles:
+                        await m.remove_roles(role, reason='Usunięto z frakcji')
+                        roles_removed.append(role.mention)
+        except Exception:
+            pass
+
+        e = _ok(f'Usunięto **{m.display_name}** z frakcji **{fm["faction_icon"]} {fm["faction_name"]}**.')
+        if roles_removed:
+            e.add_field(name='🗑️ Role Discord usunięte',
+                        value=' '.join(dict.fromkeys(roles_removed)) or '—')
+        await msg.reply(embed=e, mention_author=False)
+        db.log_action(msg.guild.id, 'faction_remove',
+                      user_id=m.id, actor_id=msg.author.id,
+                      details={'faction': fm['faction_name']})
+        await send_log(msg.guild, log_embed('⚔️ Frakcja Usunięta', ORANGE,
+            Użytkownik=m.mention,
+            **{'Była frakcja': f'{fm["faction_icon"]} {fm["faction_name"]}'},
+            Przez=msg.author.mention))
+
+
+    # ── Jobs ──────────────────────────────────────────────────────────────────
+
+    async def _cmd_createjob(self, msg, args):
+        """
+        .createjob <nazwa> <punkty> [ikona] [#kolor] [opis]
+        Tworzy nową pracę dostępną dla cywilów po osiągnięciu progu punktowego.
+        """
+        if len(args) < 2:
+            await msg.reply(embed=_err(
+                '`.createjob <nazwa> <punkty> [ikona] [#kolor] [opis]`\n'
+                'Przykład: `.createjob Farmer 5 🌾 #55aa55 Praca na farmie`'
+            ), mention_author=False); return
+
+        name = args[0]
+        try:
+            req_pts = float(args[1])
+        except ValueError:
+            await msg.reply(embed=_err('Punkty muszą być liczbą.'), mention_author=False); return
+
+        remaining = args[2:]
+        icon  = remaining[0] if remaining else '💼'
+        color = '#7289da'
+        desc  = ''
+        rest  = remaining[1:] if remaining else []
+        if rest:
+            if rest[0].startswith('#'):
+                color = rest[0]
+                desc = ' '.join(rest[1:])
+            else:
+                desc = ' '.join(rest)
+
+        if db.get_job_by_name(msg.guild.id, name):
+            await msg.reply(embed=_err(f'Praca **{name}** już istnieje.'),
+                            mention_author=False); return
+        job = db.create_job(msg.guild.id, name, req_pts,
+                            icon=icon, color=color, description=desc)
+        if not job:
+            await msg.reply(embed=_err('Błąd tworzenia pracy.'), mention_author=False); return
+        e = _ok(f'Utworzono pracę **{icon} {name}** – `{req_pts:.0f} pkt`')
+        if desc:
+            e.add_field(name='Opis', value=desc)
+        e.set_footer(text='Aby przypiąć rolę Discord: .editjob <nazwa> role <@rola>')
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_deletejob(self, msg, args):
+        if not args:
+            await msg.reply(embed=_err('`.deletejob <nazwa>`'), mention_author=False); return
+        job = db.get_job_by_name(msg.guild.id, ' '.join(args))
+        if not job:
+            await msg.reply(embed=_err('Nie znaleziono pracy.'), mention_author=False); return
+        db.delete_job(job['id'])
+        await msg.reply(embed=_ok(f'Usunięto pracę **{job["icon"]} {job["name"]}**.'),
+                        mention_author=False)
+
+    async def _cmd_editjob(self, msg, args):
+        """
+        .editjob <nazwa> <pole> <wartość>
+        Pola: name, points, icon, color, description, role
+        role = @rola lub NONE
+        """
+        if len(args) < 3:
+            await msg.reply(embed=_err(
+                '`.editjob <nazwa> <pole> <wartość>`\n'
+                'Pola: `name`, `points`, `icon`, `color`, `description`, `role`\n'
+                '`role NONE` = usuń rolę Discord'
+            ), mention_author=False); return
+        job = db.get_job_by_name(msg.guild.id, args[0])
+        if not job:
+            await msg.reply(embed=_err('Nie znaleziono pracy.'), mention_author=False); return
+        field = args[1].lower()
+        value = ' '.join(args[2:])
+
+        if field == 'role':
+            if value.upper() == 'NONE':
+                db.update_job(job['id'], role_id=None)
+                await msg.reply(embed=_ok(f'Usunięto rolę Discord z pracy **{job["name"]}**.'),
+                                mention_author=False)
+            else:
+                rid = value.strip('<@&>').strip()
+                try:
+                    rid = int(rid)
+                except ValueError:
+                    await msg.reply(embed=_err('Nieprawidłowa rola.'), mention_author=False); return
+                role = msg.guild.get_role(rid)
+                if not role:
+                    await msg.reply(embed=_err('Rola nie istnieje.'), mention_author=False); return
+                db.update_job(job['id'], role_id=rid)
+                await msg.reply(embed=_ok(f'Przypisano {role.mention} do pracy **{job["name"]}**.'),
+                                mention_author=False)
+            return
+
+        fields_map = {
+            'name':        ('name',            lambda v: v),
+            'points':      ('required_points', float),
+            'icon':        ('icon',            lambda v: v),
+            'color':       ('color',           lambda v: v),
+            'description': ('description',     lambda v: v),
+        }
+        if field not in fields_map:
+            await msg.reply(embed=_err('Pole: `name`, `points`, `icon`, `color`, `description`, `role`'),
+                            mention_author=False); return
+        col, converter = fields_map[field]
+        try:
+            db.update_job(job['id'], **{col: converter(value)})
+        except ValueError:
+            await msg.reply(embed=_err('Nieprawidłowa wartość.'), mention_author=False); return
+        await msg.reply(embed=_ok(f'Zaktualizowano **{job["name"]}**: `{field}` = `{value}`'),
+                        mention_author=False)
+
+    async def _cmd_jobs(self, msg, args):
+        gid   = msg.guild.id
+        jobs  = db.get_jobs(gid)
+        if not jobs:
+            await msg.reply(embed=_warn('Brak prac. Użyj `.createjob`.'),
+                            mention_author=False); return
+        e = discord.Embed(title='💼 Lista Prac', color=BLURPLE)
+        for j in jobs:
+            members = db.get_job_members(gid, j['id'])
+            role_str = ''
+            if j.get('role_id'):
+                role = msg.guild.get_role(j['role_id'])
+                role_str = f' | {role.mention}' if role else ' | *(rola usunięta)*'
+            val = (f'`{j["required_points"]:.0f} pkt` | 👥 {len(members)}{role_str}')
+            if j.get('description'):
+                val += f'\n*{j["description"]}*'
+            e.add_field(name=f'{j["icon"]} {j["name"]}', value=val, inline=True)
+        e.set_footer(text='Nadaj ręcznie: .givejob @user <praca> | Odbierz: .takejob @user <praca>')
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_givejob(self, msg, args):
+        """
+        .givejob @user <nazwa pracy>
+        Przydziela pracę (bypass: działa dla wszystkich, nie tylko cywilów).
+        """
+        if len(args) < 2:
+            await msg.reply(embed=_err('`.givejob @user <nazwa pracy>`'),
+                            mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        job_name = ' '.join(args[1:])
+        job = db.get_job_by_name(msg.guild.id, job_name)
+        if not job:
+            await msg.reply(embed=_err(f'Praca **{job_name}** nie istnieje.'),
+                            mention_author=False); return
+        db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
+        ok = db.select_job(m.id, msg.guild.id, job['id'],
+                           admin_granted=True, granted_by=msg.author.id)
+        if not ok:
+            await msg.reply(embed=_warn(f'**{m.display_name}** już ma pracę **{job["name"]}**.'),
+                            mention_author=False); return
+        # Assign role if configured
+        if job.get('role_id'):
+            role = msg.guild.get_role(job['role_id'])
+            if role:
+                try:
+                    await m.add_roles(role, reason=f'Admin nadał pracę: {job["name"]}')
+                except discord.Forbidden:
+                    pass
+        e = _ok(f'Przydzielono pracę **{job["icon"]} {job["name"]}** → **{m.display_name}**.')
+        e.set_footer(text=f'Przez: {msg.author.display_name}')
+        await msg.reply(embed=e, mention_author=False)
+        db.log_action(msg.guild.id, 'job_give', user_id=m.id, actor_id=msg.author.id,
+                      details={'job': job['name'], 'job_id': job['id']})
+        await send_log(msg.guild, log_embed('💼 Praca Przydzielona', GREEN,
+            Użytkownik=m.mention, Praca=f'{job["icon"]} {job["name"]}',
+            Przez=msg.author.mention))
+
+    async def _cmd_takejob(self, msg, args):
+        """
+        .takejob @user <nazwa pracy>
+        Odbiera pracę użytkownikowi.
+        """
+        if len(args) < 2:
+            await msg.reply(embed=_err('`.takejob @user <nazwa pracy>`'),
+                            mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        job_name = ' '.join(args[1:])
+        job = db.get_job_by_name(msg.guild.id, job_name)
+        if not job:
+            await msg.reply(embed=_err(f'Praca **{job_name}** nie istnieje.'),
+                            mention_author=False); return
+        ok = db.deselect_job(m.id, msg.guild.id, job['id'])
+        if not ok:
+            await msg.reply(embed=_warn(f'**{m.display_name}** nie ma pracy **{job["name"]}**.'),
+                            mention_author=False); return
+        # Remove role if configured
+        if job.get('role_id'):
+            role = msg.guild.get_role(job['role_id'])
+            if role:
+                try:
+                    await m.remove_roles(role, reason=f'Admin odebrał pracę: {job["name"]}')
+                except discord.Forbidden:
+                    pass
+        e = _ok(f'Odebrano pracę **{job["icon"]} {job["name"]}** od **{m.display_name}**.')
+        await msg.reply(embed=e, mention_author=False)
+        db.log_action(msg.guild.id, 'job_take', user_id=m.id, actor_id=msg.author.id,
+                      details={'job': job['name']})
+        await send_log(msg.guild, log_embed('💼 Praca Odebrana', ORANGE,
+            Użytkownik=m.mention, Praca=f'{job["icon"]} {job["name"]}',
+            Przez=msg.author.mention))
+
+    async def _cmd_setjobchannel(self, msg, args):
+        """
+        .setjobchannel #kanał
+        Ustawia kanał dla panelu wyboru pracy.
+        """
+        if not args:
+            await msg.reply(embed=_err('`.setjobchannel #kanał`'), mention_author=False); return
+        cid = args[0].strip('<#>').strip()
+        try:
+            cid = int(cid)
+        except ValueError:
+            await msg.reply(embed=_err('Nieprawidłowy kanał.'), mention_author=False); return
+        ch = msg.guild.get_channel(cid)
+        if not ch:
+            await msg.reply(embed=_err('Kanał nie istnieje.'), mention_author=False); return
+        db.update_guild(msg.guild.id, job_channel_id=cid)
+        await msg.reply(embed=_ok(f'Kanał prac ustawiony na {ch.mention}.\n'
+                                  f'Użyj `.jobpanel` aby wysłać/odświeżyć panel.'),
+                        mention_author=False)
+
+    async def _cmd_jobpanel(self, msg, args):
+        """
+        .jobpanel
+        Wysyła lub odświeża embed panelu pracy na skonfigurowanym kanale.
+        """
+        from cogs.jobs import _build_job_embed, JobPanelView
+        cfg = db.get_guild(msg.guild.id) or {}
+        ch_id = cfg.get('job_channel_id')
+        if not ch_id:
+            await msg.reply(embed=_err('Kanał prac nie jest ustawiony. Użyj `.setjobchannel #kanał`.'),
+                            mention_author=False); return
+        ch = msg.guild.get_channel(ch_id)
+        if not ch:
+            await msg.reply(embed=_err('Skonfigurowany kanał prac nie istnieje.'),
+                            mention_author=False); return
+
+        embed = _build_job_embed(msg.guild.id, msg.guild.name)
+        view  = JobPanelView()
+
+        # Try to edit existing panel
+        panel = db.get_panel_embed(msg.guild.id, 'jobs')
+        if panel:
+            try:
+                old_ch = msg.guild.get_channel(panel['channel_id'])
+                if old_ch:
+                    old_msg = await old_ch.fetch_message(panel['message_id'])
+                    await old_msg.edit(embed=embed, view=view)
+                    await msg.reply(embed=_ok(f'Panel pracy zaktualizowany w {ch.mention}.'),
+                                    mention_author=False)
+                    return
+            except Exception:
+                pass  # Message gone – send new one
+
+        new_msg = await ch.send(embed=embed, view=view)
+        db.save_panel_embed(msg.guild.id, ch.id, new_msg.id, 'jobs')
+        await msg.reply(embed=_ok(f'Panel pracy wysłany w {ch.mention}.'),
+                        mention_author=False)
+
+    # ── Discord member join: assign Cywil role ────────────────────────────────
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        """Automatically assign the 'Cywil' Discord role when a new member joins."""
+        gid = member.guild.id
+        db.ensure_guild(gid)
+        db.ensure_user(member.id, gid, str(member), member.display_name)
+
+        # Find the Cywil rank's Discord role
+        all_ranks = db.get_ranks(gid)
+        cywil_rank = next(
+            (r for r in all_ranks
+             if r['name'].lower() == 'cywil' and r.get('role_id')),
+            None
+        )
+        if cywil_rank:
+            role = member.guild.get_role(cywil_rank['role_id'])
+            if role:
+                try:
+                    await member.add_roles(role, reason='Nowy członek – automatyczny Cywil')
+                except discord.Forbidden:
+                    pass
+        db.log_action(gid, 'member_join', user_id=member.id,
+                      details={'action': 'auto_cywil'})
+        await send_log(member.guild, log_embed('👋 Nowy Członek', GREEN,
+            Użytkownik=member.mention,
+            **{'Rola auto': 'Cywil' if cywil_rank else '—'}))
+
+    # ── Discord → DB role sync ─────────────────────────────────────────────────
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        """Pełna synchronizacja Discord rola → DB (rangi specjalne + drzewko + frakcje)."""
+        if before.roles == after.roles:
+            return
+
+        gid = after.guild.id
+        uid = after.id
+        db.ensure_user(uid, gid)
+
+        added   = [r for r in after.roles if r not in before.roles]
+        removed = [r for r in before.roles if r not in after.roles]
+
+        # Zbuduj mapę: discord_role_id → [lista rang] (WSZYSTKIE rangi, nie tylko specjalne)
+        all_ranks    = db.get_ranks(gid)
+        role_to_ranks: dict[int, list] = {}
+        for r in all_ranks:
+            if r.get('role_id'):
+                role_to_ranks.setdefault(r['role_id'], []).append(r)
+
+        # Zbuduj mapę: discord_role_id → faction
+        factions        = db.get_factions(gid)
+        role_to_faction = {}
+        for f in factions:
+            try:
+                for rid in json.loads(f.get('role_ids') or '[]'):
+                    role_to_faction[int(rid)] = f
+            except Exception:
+                pass
+
+        # ── Rola dodana ───────────────────────────────────────────────────────
+        for role in added:
+            for rank in role_to_ranks.get(role.id, []):
+                if rank.get('is_special') or rank.get('is_owner_only'):
+                    # ── Ranga specjalna / admin: nadaj bezpośrednio ──────────
+                    db.give_special_rank(uid, gid, rank['id'],
+                                         assigned_by=0, note='Auto-sync z Discord')
+                    db.log_action(gid, 'role_sync', user_id=uid,
+                                  details={'action': 'rank_added',
+                                           'rank': rank['name'], 'role': role.name})
+                else:
+                    # ── Ranga drzewka: ustaw punkty na minimum tej rangi ─────
+                    # Uwzględnia frakcję: weź rangę pasującą do frakcji usera
+                    user_fac = db.get_user_faction_membership(uid, gid)
+                    fac_id   = user_fac.get('id') if user_fac else None
+                    if rank.get('faction_id') not in (None, fac_id):
+                        continue   # ranga innej frakcji – pomiń
+                    req_pts = rank.get('required_points', 0)
+                    if req_pts > 0:
+                        user = db.get_user(uid, gid)
+                        if user and (user.get('points') or 0) < req_pts:
+                            db.set_points(uid, gid, req_pts,
+                                          note=f'Auto-sync roli Discord: {role.name}',
+                                          assigned_by=0)
+                        db.log_action(gid, 'role_sync', user_id=uid,
+                                      details={'action': 'auto_rank_role_added',
+                                               'rank': rank['name'],
+                                               'pts_set': req_pts, 'role': role.name})
+
+            # Rola frakcji (Alpha-1, Nu-7) → przypisz do frakcji w DB
+            faction = role_to_faction.get(role.id)
+            if faction:
+                db.assign_faction_member(uid, gid, faction['id'], assigned_by=0)
+                db.log_action(gid, 'role_sync', user_id=uid,
+                              details={'action': 'faction_added',
+                                       'faction': faction['name'], 'role': role.name})
+
+        # ── Rola usunięta ─────────────────────────────────────────────────────
+        for role in removed:
+            for rank in role_to_ranks.get(role.id, []):
+                if rank.get('is_special') or rank.get('is_owner_only'):
+                    # ── Ranga specjalna: usuń ────────────────────────────────
+                    db.remove_special_rank(uid, gid, rank['id'])
+                    db.log_action(gid, 'role_sync', user_id=uid,
+                                  details={'action': 'rank_removed',
+                                           'rank': rank['name'], 'role': role.name})
+                else:
+                    # ── Ranga drzewka: obniż punkty do progu poprzedniej rangi
+                    user_fac = db.get_user_faction_membership(uid, gid)
+                    fac_id   = user_fac.get('id') if user_fac else None
+                    if rank.get('faction_id') not in (None, fac_id):
+                        continue
+                    req_pts = rank.get('required_points', 0)
+                    if req_pts > 0:
+                        user = db.get_user(uid, gid)
+                        cur  = user.get('points', 0) if user else 0
+                        # Tylko obniż jeśli aktualny wynik to właśnie ta ranga
+                        if cur >= req_pts:
+                            new_pts = max(req_pts - 1, 0)
+                            db.set_points(uid, gid, new_pts,
+                                          note=f'Auto-sync roli Discord (usunięto): {role.name}',
+                                          assigned_by=0)
+                        db.log_action(gid, 'role_sync', user_id=uid,
+                                      details={'action': 'auto_rank_role_removed',
+                                               'rank': rank['name'], 'role': role.name})
+
+            # Usunięcie roli frakcji → usuń z frakcji w DB
+            faction = role_to_faction.get(role.id)
+            if faction:
+                current = db.get_user_faction_membership(uid, gid)
+                if current and current.get('id') == faction['id']:
+                    db.remove_faction_member(uid, gid)
+                    db.log_action(gid, 'role_sync', user_id=uid,
+                                  details={'action': 'faction_removed',
+                                           'faction': faction['name']})
 
 
 async def setup(bot: commands.Bot):

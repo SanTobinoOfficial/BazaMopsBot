@@ -1,0 +1,287 @@
+{% extends 'base.html' %}
+{% block title %}Kanały PTT{% endblock %}
+
+{% block extra_head %}
+<style>
+  .ch-badge { font-size:.75rem; padding:.2em .55em; }
+  .radio-badge { background:rgba(250,166,26,.15); color:var(--discord-yellow);
+                 border:1px solid rgba(250,166,26,.3); }
+  .order-badge { background:rgba(114,137,218,.15); color:var(--discord-blue);
+                 border:1px solid rgba(114,137,218,.3); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h2 class="mb-0">
+      <i class="bi bi-reception-4 me-2" style="color:var(--discord-blue)"></i>Kanały PTT
+    </h2>
+    <small class="text-muted">Kanały audio dla urządzeń ESP32 – krótkofalówki PTT</small>
+  </div>
+  <button class="btn btn-discord" data-bs-toggle="modal" data-bs-target="#addModal">
+    <i class="bi bi-plus-lg me-1"></i>Dodaj kanał
+  </button>
+</div>
+
+{# ── Info card ─────────────────────────────────────────────────────────────── #}
+<div class="card mb-4">
+  <div class="card-body py-3 px-4">
+    <div class="row g-3 align-items-start">
+      <div class="col-md-6">
+        <div class="section-title"><i class="bi bi-info-circle me-1"></i>Jak to działa</div>
+        <ul class="mb-0 ps-3 small text-muted">
+          <li>Każde urządzenie ESP32 ma aktualnie wybrany kanał (<code>current_channel_id</code>).</li>
+          <li>Przycisk D8 na ESP32 wysyła <code>POST /api/channel/next</code> → cykl przez kanały.</li>
+          <li>Żółta dioda miga N razy = numer kolejny kanału w liście.</li>
+          <li>Audio PTT przez WebSocket <code>/ws/audio</code> trafia tylko do urządzeń na tym samym kanale.</li>
+          <li>Kanał z flagą <i class="bi bi-wifi text-warning"></i>&nbsp;<strong>Radio bridge</strong> jest obsługiwany przez Raspberry Pi + fizyczną krótkofalówkę (pi_bridge.py).</li>
+        </ul>
+      </div>
+      <div class="col-md-6">
+        <div class="section-title"><i class="bi bi-diagram-3 me-1"></i>Urządzenia na kanałach</div>
+        {% if devices %}
+          {% for d in devices %}
+            {% set cur_ch = channels | selectattr('id', 'equalto', d.current_channel_id) | list | first if d.current_channel_id else None %}
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <span class="status-dot {{ 'online' if d.status == 'online' else 'offline' }}"
+                    style="width:8px;height:8px;border-radius:50%;display:inline-block;background:{{ '#43b581' if d.status == 'online' else '#72767d' }}"></span>
+              <span style="font-size:.85rem">{{ d.name }}</span>
+              <span class="text-muted" style="font-size:.8rem">→</span>
+              {% if cur_ch %}
+                <span class="badge ch-badge order-badge">{{ cur_ch.name }}</span>
+              {% else %}
+                <span class="text-muted" style="font-size:.8rem">brak kanału</span>
+              {% endif %}
+            </div>
+          {% endfor %}
+        {% else %}
+          <span class="text-muted small">Brak urządzeń. Dodaj w <a href="{{ url_for('devices_page', guild_id=guild_id) }}">Urządzenia</a>.</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Channels table ─────────────────────────────────────────────────────────── #}
+{% if channels %}
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th style="width:50px">Kolejność</th>
+          <th>Nazwa kanału</th>
+          <th>Kanał głosowy Discord</th>
+          <th>Bot ID</th>
+          <th>Urządzenia na kanale</th>
+          <th>Flagi</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ch in channels %}
+        <tr>
+          <td>
+            <span class="badge ch-badge order-badge">{{ ch.order_index }}</span>
+          </td>
+          <td>
+            <strong>{{ ch.name }}</strong>
+          </td>
+          <td>
+            {% if ch.discord_channel_id %}
+              {% set dch = voice_channels | selectattr('id', 'equalto', ch.discord_channel_id | string) | list | first %}
+              {% if dch %}
+                <i class="bi bi-volume-up me-1 text-muted"></i>{{ dch.name }}
+              {% else %}
+                <code style="font-size:.8rem">{{ ch.discord_channel_id }}</code>
+              {% endif %}
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if ch.bot_id %}
+              <code style="font-size:.8rem">{{ ch.bot_id }}</code>
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% set ch_devices = devices | selectattr('current_channel_id', 'equalto', ch.id) | list %}
+            {% if ch_devices %}
+              {% for d in ch_devices %}
+                <span class="badge {{ 'bg-success' if d.status == 'online' else 'bg-secondary' }} me-1"
+                      style="font-size:.7rem">{{ d.name }}</span>
+              {% endfor %}
+            {% else %}
+              <span class="text-muted" style="font-size:.8rem">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if ch.is_radio_bridge %}
+              <span class="badge ch-badge radio-badge">
+                <i class="bi bi-wifi me-1"></i>Radio bridge
+              </span>
+            {% endif %}
+          </td>
+          <td class="text-end pe-3">
+            <div class="d-flex gap-1 justify-content-end">
+              <button class="btn btn-sm btn-outline-secondary"
+                      onclick="openEditModal({{ ch | tojson | safe }})">
+                <i class="bi bi-pencil"></i>
+              </button>
+              <form method="POST"
+                    action="{{ url_for('channel_delete', guild_id=guild_id, channel_id=ch.id) }}"
+                    onsubmit="return confirm('Usunąć kanał {{ ch.name }}?')">
+                <button type="submit" class="btn btn-sm btn-outline-danger">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="card">
+  <div class="card-body text-center py-5 text-muted">
+    <i class="bi bi-reception-4" style="font-size:3rem;opacity:.3"></i>
+    <p class="mt-3 mb-1">Brak kanałów PTT</p>
+    <small>Kliknij "Dodaj kanał" aby skonfigurować pierwszy kanał audio.</small>
+  </div>
+</div>
+{% endif %}
+
+{# ── Add modal ─────────────────────────────────────────────────────────────── #}
+<div class="modal fade" id="addModal" tabindex="-1">
+  <div class="modal-dialog">
+    <form method="POST" action="{{ url_for('channel_add', guild_id=guild_id) }}"
+          class="modal-content" style="background:var(--bs-secondary-bg)">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title"><i class="bi bi-reception-4 me-2"></i>Dodaj kanał PTT</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">Nazwa kanału</label>
+          <input type="text" name="name" class="form-control bg-dark border-secondary text-white"
+                 placeholder="np. Kanał 1 – Ogólny" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Kolejność <small class="text-muted">(0 = pierwszy)</small></label>
+          <input type="number" name="order_index" value="0" min="0"
+                 class="form-control bg-dark border-secondary text-white">
+          <div class="form-text">Urządzenia cyklicznie przełączają się przez kanały w tej kolejności.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Kanał głosowy Discord <small class="text-muted">(opcjonalnie)</small></label>
+          <select name="discord_channel_id" class="form-select bg-dark border-secondary text-white">
+            <option value="">— brak —</option>
+            {% for vc in voice_channels %}
+              <option value="{{ vc.id }}">{{ vc.name }}</option>
+            {% endfor %}
+          </select>
+          <div class="form-text">Powiązany kanał głosowy Discord — dla pi_bridge.py.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Bot Device ID <small class="text-muted">(opcjonalnie)</small></label>
+          <select name="bot_id" class="form-select bg-dark border-secondary text-white">
+            <option value="">— brak —</option>
+            {% for d in devices %}
+              <option value="{{ d.device_id }}">{{ d.name }} ({{ d.device_id }})</option>
+            {% endfor %}
+          </select>
+          <div class="form-text">Urządzenie/bot reprezentujący ten kanał na Discordzie.</div>
+        </div>
+        <div class="form-check form-switch mb-0">
+          <input class="form-check-input" type="checkbox" name="is_radio_bridge" id="add_radio">
+          <label class="form-check-label" for="add_radio">
+            <i class="bi bi-wifi text-warning me-1"></i>Radio bridge
+            <small class="text-muted">(obsługiwany przez pi_bridge.py)</small>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Anuluj</button>
+        <button type="submit" class="btn btn-discord">Dodaj</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ── Edit modal ────────────────────────────────────────────────────────────── #}
+<div class="modal fade" id="editModal" tabindex="-1">
+  <div class="modal-dialog">
+    <form id="editForm" method="POST" class="modal-content"
+          style="background:var(--bs-secondary-bg)">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Edytuj kanał PTT</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">Nazwa</label>
+          <input type="text" id="edit_name" name="name"
+                 class="form-control bg-dark border-secondary text-white" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Kolejność</label>
+          <input type="number" id="edit_order" name="order_index" min="0"
+                 class="form-control bg-dark border-secondary text-white">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Kanał głosowy Discord</label>
+          <select id="edit_discord_ch" name="discord_channel_id"
+                  class="form-select bg-dark border-secondary text-white">
+            <option value="">— brak —</option>
+            {% for vc in voice_channels %}
+              <option value="{{ vc.id }}">{{ vc.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Bot Device ID</label>
+          <select id="edit_bot_id" name="bot_id"
+                  class="form-select bg-dark border-secondary text-white">
+            <option value="">— brak —</option>
+            {% for d in devices %}
+              <option value="{{ d.device_id }}">{{ d.name }} ({{ d.device_id }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-check form-switch mb-0">
+          <input class="form-check-input" type="checkbox" name="is_radio_bridge" id="edit_radio">
+          <label class="form-check-label" for="edit_radio">
+            <i class="bi bi-wifi text-warning me-1"></i>Radio bridge
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Anuluj</button>
+        <button type="submit" class="btn btn-discord">Zapisz</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function openEditModal(ch) {
+  document.getElementById('editForm').action =
+    '/guild/{{ guild_id }}/channels/' + ch.id + '/edit';
+  document.getElementById('edit_name').value    = ch.name;
+  document.getElementById('edit_order').value   = ch.order_index;
+  const dchSel = document.getElementById('edit_discord_ch');
+  dchSel.value = ch.discord_channel_id ? String(ch.discord_channel_id) : '';
+  const botSel = document.getElementById('edit_bot_id');
+  botSel.value = ch.bot_id || '';
+  document.getElementById('edit_radio').checked = !!ch.is_radio_bridge;
+  new bootstrap.Modal(document.getElementById('editModal')).show();
+}
+</script>
+{% endblock %}

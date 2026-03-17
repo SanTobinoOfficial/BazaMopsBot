@@ -13,7 +13,7 @@
   Użytkownicy z uprawnieniem <strong>Zarządzaj serwerem</strong> zawsze mają dostęp do komend admina.
 </div>
 
-<form method="POST" action="{{ url_for('guild_permissions', guild_id=guild_id) }}">
+<form method="POST" action="{{ url_for('permissions_page', guild_id=guild_id) }}">
 <div class="row g-4">
 
   {% for category, commands in command_list.items() %}
@@ -48,13 +48,13 @@
               </tr>
             </thead>
             <tbody>
-            {% for cmd_name, cmd_desc in commands.items() %}
-            {% set perm = permissions.get(cmd_name, {}) %}
+            {% for cmd_name in commands %}
+            {% set perm = current_perms.get(cmd_name, {}) %}
             <tr>
               <td>
                 <code class="text-warning">.{{ cmd_name }}</code>
               </td>
-              <td class="text-muted small">{{ cmd_desc }}</td>
+              <td class="text-muted small">{{ cmd_name }}</td>
               <td>
                 <div class="d-flex flex-wrap gap-1">
                   {% for role in guild_roles %}
@@ -103,7 +103,7 @@
 </form>
 
 <form id="reset-form" method="POST"
-      action="{{ url_for('guild_permissions', guild_id=guild_id) }}?reset=1" style="display:none;"></form>
+      action="{{ url_for('permissions_page', guild_id=guild_id) }}?reset=1" style="display:none;"></form>
 
 {% endblock %}
 

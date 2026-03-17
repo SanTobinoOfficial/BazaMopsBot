@@ -1,0 +1,317 @@
+{% extends 'base.html' %}
+{% block title %}Urządzenia{% endblock %}
+
+{% block extra_head %}
+<style>
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+  .status-dot.online  { background: var(--discord-green); box-shadow: 0 0 6px var(--discord-green); }
+  .status-dot.offline { background: #72767d; }
+  .secret-box { font-family: monospace; font-size: .8rem; letter-spacing: .03em;
+                background: #1e2124; padding: .25rem .5rem; border-radius: .25rem;
+                border: 1px solid #40444b; color: #b9bbbe; cursor: pointer; }
+  .secret-box:hover { border-color: var(--discord-blue); color: #fff; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h2 class="mb-0"><i class="bi bi-broadcast me-2" style="color:var(--discord-blue)"></i>Urządzenia Fizyczne</h2>
+    <small class="text-muted">Krótkofalówki ESP32 – status online, clock in/out i kanały PTT</small>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('channels_page', guild_id=guild_id) }}" class="btn btn-outline-secondary">
+      <i class="bi bi-reception-4 me-1"></i>Kanały PTT
+    </a>
+    <button class="btn btn-discord" data-bs-toggle="modal" data-bs-target="#addModal">
+      <i class="bi bi-plus-lg me-1"></i>Dodaj urządzenie
+    </button>
+  </div>
+</div>
+
+{# ── API Info card ─────────────────────────────────────────────────────────── #}
+<div class="card mb-4">
+  <div class="card-header d-flex align-items-center gap-2">
+    <i class="bi bi-code-slash text-muted"></i>
+    <strong>Endpointy API dla ESP32</strong>
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="section-title">Heartbeat (co 30s)</label>
+        <code class="d-block p-2 rounded" style="background:#1e2124;font-size:.8rem">
+          POST {{ request.host_url }}api/device/heartbeat<br>
+          { "device_id": "...", "secret": "..." }
+        </code>
+      </div>
+      <div class="col-md-6">
+        <label class="section-title">Clock In / Out</label>
+        <code class="d-block p-2 rounded" style="background:#1e2124;font-size:.8rem">
+          POST {{ request.host_url }}api/clock<br>
+          { "device_id": "...", "secret": "...",<br>
+          &nbsp;&nbsp;"action": "clock_in" | "clock_out" }
+        </code>
+      </div>
+      <div class="col-md-6">
+        <label class="section-title">Zmiana kanału PTT</label>
+        <code class="d-block p-2 rounded" style="background:#1e2124;font-size:.8rem">
+          POST {{ request.host_url }}api/channel/next<br>
+          { "device_id": "...", "secret": "..." }<br>
+          ← { "channel_name": "...", "channel_order": N }
+        </code>
+      </div>
+      <div class="col-md-6">
+        <label class="section-title">WebSocket Audio PTT</label>
+        <code class="d-block p-2 rounded" style="background:#1e2124;font-size:.8rem">
+          WS {{ request.host_url.replace('http','ws') }}ws/audio<br>
+          Headers: X-Device-ID + X-API-Secret<br>
+          TEXT "START" / BIN PCM16 / TEXT "END"
+        </code>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Devices table ─────────────────────────────────────────────────────────── #}
+{% if devices %}
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Nazwa</th>
+          <th>Device ID</th>
+          <th>Użytkownik Discord</th>
+          <th>Kanał PTT</th>
+          <th>Ostatni heartbeat</th>
+          <th>API Secret</th>
+          <th>Bot Discord</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="devices-tbody">
+        {% for d in devices %}
+        <tr data-device-id="{{ d.device_id }}">
+          <td>
+            <span class="d-flex align-items-center gap-2">
+              <span class="status-dot {{ 'online' if d.status == 'online' else 'offline' }}"
+                    data-status="{{ d.status }}"></span>
+              <span class="status-label" style="font-size:.85rem">
+                {{ '🟢 Online' if d.status == 'online' else '⚫ Offline' }}
+              </span>
+            </span>
+          </td>
+          <td><strong>{{ d.name }}</strong></td>
+          <td><code style="font-size:.8rem">{{ d.device_id }}</code></td>
+          <td>
+            {% if d.user_id %}
+              <span class="text-info"><i class="bi bi-person-fill me-1"></i>{{ d.user_id }}</span>
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% set cur_ch = channels_map.get(d.current_channel_id) if d.current_channel_id else None %}
+            {% if cur_ch %}
+              <span class="badge" style="background:rgba(114,137,218,.2);color:var(--discord-blue);border:1px solid rgba(114,137,218,.3)">
+                <i class="bi bi-reception-4 me-1"></i>{{ cur_ch.name }}
+              </span>
+              {% if cur_ch.is_radio_bridge %}
+                <i class="bi bi-wifi text-warning ms-1" title="Radio bridge"></i>
+              {% endif %}
+            {% else %}
+              <span class="text-muted" style="font-size:.8rem">—</span>
+            {% endif %}
+          </td>
+          <td>
+            <span class="last-hb" style="font-size:.85rem">
+              {% if d.last_heartbeat %}
+                {{ d.last_heartbeat | fmtdt }}
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </span>
+          </td>
+          <td>
+            <span class="secret-box" title="Kliknij aby skopiować"
+                  onclick="copySecret(this, '{{ d.api_secret }}')">
+              {{ d.api_secret[:8] }}••••••••
+            </span>
+          </td>
+          <td>
+            {% if d.bot_token %}
+              <span class="badge {{ 'bg-success' if d.bot_running else 'bg-secondary' }}">
+                {{ '▶ Działa' if d.bot_running else '■ Zatrzymany' }}
+              </span>
+            {% else %}
+              <span class="text-muted" style="font-size:.8rem">brak tokenu</span>
+            {% endif %}
+          </td>
+          <td class="text-end pe-3">
+            <div class="d-flex gap-1 justify-content-end">
+              <button class="btn btn-sm btn-outline-secondary"
+                      onclick="openEditModal({{ d | tojson | safe }})">
+                <i class="bi bi-pencil"></i>
+              </button>
+              {% if d.bot_token %}
+              <form method="POST"
+                    action="{{ url_for('device_restart', guild_id=guild_id, device_id=d.device_id) }}">
+                <button type="submit" class="btn btn-sm btn-outline-info" title="Restart bota">
+                  <i class="bi bi-arrow-repeat"></i>
+                </button>
+              </form>
+              {% endif %}
+              <form method="POST"
+                    action="{{ url_for('device_delete', guild_id=guild_id, device_id=d.device_id) }}"
+                    onsubmit="return confirm('Usunąć urządzenie {{ d.name }}?')">
+                <button type="submit" class="btn btn-sm btn-outline-danger">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="card">
+  <div class="card-body text-center py-5 text-muted">
+    <i class="bi bi-broadcast" style="font-size:3rem;opacity:.3"></i>
+    <p class="mt-3 mb-1">Brak urządzeń</p>
+    <small>Kliknij "Dodaj urządzenie" aby dodać pierwsze ESP32.</small>
+  </div>
+</div>
+{% endif %}
+
+{# ── Add modal ─────────────────────────────────────────────────────────────── #}
+<div class="modal fade" id="addModal" tabindex="-1">
+  <div class="modal-dialog">
+    <form method="POST" action="{{ url_for('device_add', guild_id=guild_id) }}"
+          class="modal-content" style="background:var(--bs-secondary-bg)">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title"><i class="bi bi-broadcast me-2"></i>Dodaj urządzenie</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">Device ID <small class="text-muted">(unikalne, np. radio_1)</small></label>
+          <input type="text" name="device_id" class="form-control bg-dark border-secondary text-white"
+                 placeholder="radio_1" pattern="[a-z0-9_]+" required>
+          <div class="form-text">Małe litery, cyfry, podkreślniki.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Nazwa wyświetlana</label>
+          <input type="text" name="name" class="form-control bg-dark border-secondary text-white"
+                 placeholder="Radio 1" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Token bota Discord <small class="text-muted">(opcjonalnie)</small></label>
+          <input type="password" name="bot_token" class="form-control bg-dark border-secondary text-white"
+                 placeholder="Bot token z Discord Developer Portal">
+          <div class="form-text">Jeśli podany, bot zmienia status na 🟢/⚫ zgodnie z heartbeatem.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Discord User ID <small class="text-muted">(opcjonalnie)</small></label>
+          <input type="text" name="user_id" class="form-control bg-dark border-secondary text-white"
+                 placeholder="123456789012345678">
+          <div class="form-text">Użytkownik do którego przypisane są clock in/out z tego urządzenia.</div>
+        </div>
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Anuluj</button>
+        <button type="submit" class="btn btn-discord">Dodaj</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ── Edit modal ────────────────────────────────────────────────────────────── #}
+<div class="modal fade" id="editModal" tabindex="-1">
+  <div class="modal-dialog">
+    <form id="editForm" method="POST" class="modal-content"
+          style="background:var(--bs-secondary-bg)">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Edytuj urządzenie</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">Nazwa</label>
+          <input type="text" id="edit_name" name="name"
+                 class="form-control bg-dark border-secondary text-white" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Token bota Discord</label>
+          <input type="password" id="edit_token" name="bot_token"
+                 class="form-control bg-dark border-secondary text-white"
+                 placeholder="Pozostaw puste aby nie zmieniać">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Discord User ID</label>
+          <input type="text" id="edit_user_id" name="user_id"
+                 class="form-control bg-dark border-secondary text-white">
+        </div>
+        <div class="alert alert-secondary p-2 mb-0" style="font-size:.8rem">
+          <strong>API Secret:</strong> <span id="edit_secret" class="font-monospace"></span>
+        </div>
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Anuluj</button>
+        <button type="submit" class="btn btn-discord">Zapisz</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function openEditModal(d) {
+  document.getElementById('editForm').action =
+    '/guild/{{ guild_id }}/devices/' + d.device_id + '/edit';
+  document.getElementById('edit_name').value    = d.name;
+  document.getElementById('edit_token').value   = '';
+  document.getElementById('edit_user_id').value = d.user_id || '';
+  document.getElementById('edit_secret').textContent = d.api_secret;
+  new bootstrap.Modal(document.getElementById('editModal')).show();
+}
+
+function copySecret(el, secret) {
+  navigator.clipboard.writeText(secret).then(() => {
+    const orig = el.textContent;
+    el.textContent = '✓ Skopiowano!';
+    setTimeout(() => { el.textContent = orig; }, 1500);
+  });
+}
+
+// ── Real-time status polling ──────────────────────────────────────────────
+function refreshStatus() {
+  fetch('/api/guild/{{ guild_id }}/devices/status')
+    .then(r => r.json())
+    .then(list => {
+      list.forEach(d => {
+        const row = document.querySelector(`[data-device-id="${d.device_id}"]`);
+        if (!row) return;
+        const dot   = row.querySelector('.status-dot');
+        const label = row.querySelector('.status-label');
+        const online = d.status === 'online';
+        dot.className   = 'status-dot ' + (online ? 'online' : 'offline');
+        label.textContent = online ? '🟢 Online' : '⚫ Offline';
+        if (d.last_heartbeat) {
+          const hb = row.querySelector('.last-hb');
+          if (hb) {
+            const dt = new Date(d.last_heartbeat);
+            hb.textContent = dt.toLocaleString('pl-PL');
+          }
+        }
+      });
+    })
+    .catch(() => {});
+}
+setInterval(refreshStatus, 10000); // co 10s
+</script>
+{% endblock %}

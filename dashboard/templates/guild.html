@@ -1,5 +1,11 @@
 {% extends 'base.html' %}
 {% block title %}{{ guild_name }} – Przegląd{% endblock %}
+{% block extra_head %}
+<style>
+  .chart-card { background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.07);
+                border-radius: 8px; padding: 16px; }
+</style>
+{% endblock %}
 {% block content %}
 <div class="d-flex align-items-center gap-3 mb-4">
   {% if icon_url %}
@@ -107,10 +113,10 @@
   <div class="col-lg-6">
     <div class="card p-3">
       <div class="section-title"><i class="bi bi-exclamation-triangle text-warning me-1"></i>Ostatnie warny</div>
-      {% if recent_warnings %}
+      {% if recent_warns %}
       <table class="table table-sm mb-0">
         <tbody>
-        {% for w in recent_warnings %}
+        {% for w in recent_warns %}
         <tr>
           <td>
             <a href="{{ url_for('user_detail', guild_id=guild_id, user_id=w.user_id) }}"
@@ -129,8 +135,9 @@
       {% else %}
       <p class="text-muted small mb-0">Brak warnów. 🎉</p>
       {% endif %}
+
       <div class="mt-2 text-end">
-        <a href="{{ url_for('guild_logs', guild_id=guild_id) }}" class="btn btn-sm btn-outline-secondary">
+        <a href="{{ url_for('logs_page', guild_id=guild_id) }}" class="btn btn-sm btn-outline-secondary">
           Zobacz logi
         </a>
       </div>
@@ -170,5 +177,110 @@
       {% endif %}
     </div>
   </div>
+
+  <!-- Activity Charts -->
+  <div class="col-lg-6">
+    <div class="card p-3">
+      <div class="section-title mb-2"><i class="bi bi-graph-up me-1"></i>Punkty (ostatnie 14 dni)</div>
+      <canvas id="chartPoints" height="160"></canvas>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card p-3">
+      <div class="section-title mb-2"><i class="bi bi-people me-1"></i>Aktywni użytkownicy (ostatnie 14 dni)</div>
+      <canvas id="chartUsers" height="160"></canvas>
+    </div>
+  </div>
+
+  <!-- Quick actions -->
+  <div class="col-12">
+    <div class="card p-3">
+      <div class="section-title mb-2"><i class="bi bi-lightning-charge me-1"></i>Szybkie akcje</div>
+      <div class="d-flex gap-3 flex-wrap align-items-center">
+        <form method="POST" action="{{ url_for('send_clock_embed', guild_id=guild_id) }}" class="m-0">
+          {% if clock_channel_id %}
+          <input type="hidden" name="channel_id" value="{{ clock_channel_id }}">
+          <button type="submit" class="btn btn-sm btn-success">
+            <i class="bi bi-clock me-1"></i>Wyślij embed Clock In/Out
+          </button>
+          {% else %}
+          <button type="button" class="btn btn-sm btn-success" disabled>
+            <i class="bi bi-clock me-1"></i>Wyślij embed Clock In/Out
+          </button>
+          {% endif %}
+        </form>
+        {% if clock_channel_name %}
+        <small class="text-muted"><i class="bi bi-hash"></i>{{ clock_channel_name }}</small>
+        {% else %}
+        <small class="text-danger">
+          <i class="bi bi-exclamation-triangle me-1"></i>Kanał clock nie ustawiony –
+          <a href="{{ url_for('config_page', guild_id=guild_id) }}" class="text-warning">skonfiguruj</a>
+        </small>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick export links -->
+  <div class="col-12">
+    <div class="card p-3">
+      <div class="section-title mb-2"><i class="bi bi-download me-1"></i>Eksport i backup</div>
+      <div class="d-flex gap-2 flex-wrap">
+        <a href="{{ url_for('export_users', guild_id=guild_id) }}" class="btn btn-sm btn-outline-secondary">
+          <i class="bi bi-people me-1"></i>Eksportuj użytkowników (CSV)
+        </a>
+        <a href="{{ url_for('export_transactions', guild_id=guild_id) }}" class="btn btn-sm btn-outline-secondary">
+          <i class="bi bi-coin me-1"></i>Eksportuj transakcje (CSV)
+        </a>
+        <a href="{{ url_for('backup_guild', guild_id=guild_id) }}" class="btn btn-sm btn-outline-info">
+          <i class="bi bi-archive me-1"></i>Backup JSON
+        </a>
+      </div>
+    </div>
+  </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+  const GUILD_ID = {{ guild_id }};
+  const gridColor = 'rgba(255,255,255,.05)';
+  const tickColor = '#72767d';
+  const baseOpts = {
+    responsive: true,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { color: tickColor, font: { size: 10 } }, grid: { color: gridColor } },
+      y: { ticks: { color: tickColor }, grid: { color: gridColor }, beginAtZero: true }
+    }
+  };
+
+  fetch(`/api/guild/${GUILD_ID}/chart-data?days=14`)
+    .then(r => r.json())
+    .then(data => {
+      const labels = data.map(d => d.date.slice(5));
+      new Chart(document.getElementById('chartPoints'), {
+        type: 'line',
+        data: { labels, datasets: [{
+          data: data.map(d => d.points),
+          borderColor: '#7289da', backgroundColor: 'rgba(114,137,218,.15)',
+          fill: true, tension: 0.3, pointRadius: 3
+        }] },
+        options: baseOpts
+      });
+      new Chart(document.getElementById('chartUsers'), {
+        type: 'bar',
+        data: { labels, datasets: [{
+          data: data.map(d => d.active_users),
+          backgroundColor: 'rgba(67,181,129,.6)', borderColor: '#43b581',
+          borderWidth: 1, borderRadius: 3
+        }] },
+        options: baseOpts
+      });
+    })
+    .catch(() => {});
+})();
+</script>
 {% endblock %}

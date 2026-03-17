@@ -1,0 +1,14 @@
+# Wymagania dla pi_bridge.py (Raspberry Pi 4)
+# Instalacja: pip install -r pi_bridge_requirements.txt
+
+discord.py>=2.3.2
+PyAudio>=0.2.11
+python-dotenv>=1.0.0
+requests>=2.31.0
+
+# audioop jest wbudowane w Python (stdlib) – nie wymaga instalacji
+# Dostępne w Python 3.x do 3.12 (na Raspberry Pi OS zawsze dostępne)
+
+# RPi.GPIO – zainstaluj przez apt lub pip TYLKO na Raspberry Pi:
+#   sudo apt install python3-rpi.gpio
+#   LUB: pip install RPi.GPIO
