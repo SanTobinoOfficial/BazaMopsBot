@@ -106,18 +106,34 @@
       </div>
       {% endfor %}
 
-      {% if all_special_ranks %}
+      {% if all_ranks %}
       <hr class="border-secondary">
-      <div class="section-title">Nadaj rangę specjalną</div>
+      <div class="section-title"><i class="bi bi-star me-1"></i>Nadaj rangę</div>
       <form method="POST" action="{{ url_for('give_rank_action', guild_id=guild_id, user_id=user_id) }}">
         <select name="rank_id" class="form-select form-select-sm bg-dark border-secondary text-white mb-2">
-          {% for r in all_special_ranks %}
-          <option value="{{ r.id }}">{{ r.icon }} {{ r.name }}</option>
+          <optgroup label="★ Rangi Specjalne / Właścicielskie">
+            {% for r in all_ranks %}{% if r.is_special or r.is_owner_only %}
+            <option value="{{ r.id }}">{{ r.icon }} {{ r.name }}</option>
+            {% endif %}{% endfor %}
+          </optgroup>
+          {% for fac in factions %}
+          <optgroup label="{{ fac.icon }} {{ fac.name }}">
+            {% for r in all_ranks %}{% if (not r.is_special) and (not r.is_owner_only) and r.faction_id == fac.id %}
+            <option value="{{ r.id }}">{{ r.icon }} {{ r.name }} ({{ r.required_points | int }} pkt)</option>
+            {% endif %}{% endfor %}
+          </optgroup>
           {% endfor %}
+          <optgroup label="⚙️ Rangi ogólne (auto)">
+            {% for r in all_ranks %}{% if (not r.is_special) and (not r.is_owner_only) and not r.faction_id %}
+            <option value="{{ r.id }}">{{ r.icon }} {{ r.name }} ({{ r.required_points | int }} pkt)</option>
+            {% endif %}{% endfor %}
+          </optgroup>
         </select>
         <input type="text" name="note" class="form-control form-control-sm bg-dark border-secondary text-white mb-2"
                placeholder="Nota (opcjonalna)">
-        <button class="btn btn-sm btn-discord w-100">Nadaj rangę</button>
+        <button class="btn btn-sm btn-discord w-100">
+          <i class="bi bi-star-fill me-1"></i>Nadaj rangę
+        </button>
       </form>
       {% endif %}
     </div>

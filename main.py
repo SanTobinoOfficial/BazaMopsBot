@@ -17,12 +17,32 @@ def run_dashboard():
     from dashboard.app import app
     port = int(os.environ.get('PORT', 5000))
     print(f'🌐 Dashboard startuje na porcie {port}')
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    try:
+        from waitress import serve
+        serve(app, host='0.0.0.0', port=port, threads=4)
+    except ImportError:
+        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 
 async def run_bot():
-    """Run Discord bot."""
-    from discord_bot import bot
+    """Run Discord bot + device bots."""
+    # Expose the event loop to device_manager so Flask threads can schedule coroutines
+    try:
+        from device_manager import device_manager, set_loop
+        set_loop(asyncio.get_running_loop())
+        asyncio.create_task(device_manager.start_all())
+        print('📻 Device manager uruchomiony')
+    except Exception as e:
+        print(f'⚠️  Device manager nie wystartował: {e}')
+
+    try:
+        from discord_bot import bot
+    except Exception as e:
+        print(f'⚠️  Nie można załadować bota Discord: {e}')
+        print('💡 Dashboard jest aktywny na porcie 5000.')
+        while True:
+            await asyncio.sleep(3600)
+
     token = os.environ.get('DISCORD_TOKEN')
     if not token:
         print('⚠️  Brak DISCORD_TOKEN – bot Discord nie wystartuje. Tylko dashboard będzie aktywny.')

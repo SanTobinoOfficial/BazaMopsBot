@@ -289,6 +289,31 @@ def _run_migrations(conn):
             granted_by INTEGER DEFAULT NULL,
             selected_at TEXT DEFAULT (datetime('now')),
             UNIQUE(user_id, guild_id, job_id))""",
+        "ALTER TABLE jobs ADD COLUMN points_bonus_per_hour REAL DEFAULT 0",
+        "ALTER TABLE guilds ADD COLUMN regulamin_channel_id INTEGER DEFAULT NULL",
+        "ALTER TABLE guilds ADD COLUMN regulamin_message_ids TEXT DEFAULT '[]'",
+        "ALTER TABLE guilds ADD COLUMN regulamin_file_hash TEXT DEFAULT NULL",
+        "ALTER TABLE guilds ADD COLUMN auto_balance_jobs INTEGER DEFAULT 0",
+        """CREATE TABLE IF NOT EXISTS devices (
+            device_id      TEXT PRIMARY KEY,
+            guild_id       INTEGER NOT NULL,
+            user_id        INTEGER DEFAULT NULL,
+            name           TEXT    NOT NULL DEFAULT '',
+            bot_token      TEXT    DEFAULT '',
+            api_secret     TEXT    DEFAULT '',
+            status         TEXT    DEFAULT 'offline',
+            last_heartbeat TEXT    DEFAULT NULL,
+            created_at     TEXT    DEFAULT (datetime('now')))""",
+        "ALTER TABLE devices ADD COLUMN current_channel_id INTEGER DEFAULT NULL",
+        """CREATE TABLE IF NOT EXISTS channels (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id           INTEGER NOT NULL,
+            name               TEXT    NOT NULL,
+            discord_channel_id INTEGER DEFAULT NULL,
+            bot_id             TEXT    DEFAULT NULL,
+            order_index        INTEGER DEFAULT 0,
+            is_radio_bridge    INTEGER DEFAULT 0,
+            created_at         TEXT    DEFAULT (datetime('now')))""",
     ]
     for m in migrations:
         try:
@@ -740,7 +765,22 @@ def clock_out(user_id: int, guild_id: int) -> Optional[Dict]:
     secs = (co_dt - ci_dt).total_seconds()
     hours = secs / 3600
     mins = secs / 60
-    pts = round(hours * pph, 2) if mins >= min_min else 0.0
+
+    # Sum job bonuses for this user
+    job_bonus_pph = 0.0
+    with _get_conn() as _c:
+        rows = _c.execute(
+            '''SELECT COALESCE(j.points_bonus_per_hour, 0) AS bonus
+               FROM user_jobs uj
+               JOIN jobs j ON uj.job_id = j.id
+               WHERE uj.user_id=? AND uj.guild_id=?''',
+            (user_id, guild_id)
+        ).fetchall()
+        job_bonus_pph = sum(r['bonus'] for r in rows)
+
+    effective_pph = pph + job_bonus_pph
+    pts = round(hours * effective_pph, 2) if mins >= min_min else 0.0
+    base_pts = round(hours * pph, 2) if mins >= min_min else 0.0
     with _lock:
         with _get_conn() as conn:
             sess = conn.execute(
@@ -763,12 +803,17 @@ def clock_out(user_id: int, guild_id: int) -> Optional[Dict]:
             )
             conn.commit()
     if pts > 0:
+        note = f'Sesja {round(hours, 2)}h | {ci_dt.strftime("%H:%M")}→{co_dt.strftime("%H:%M")}'
+        if job_bonus_pph > 0:
+            note += f' | bonus pracy +{job_bonus_pph:.1f} pkt/h'
         add_points(user_id, guild_id, pts,
-                   note=f'Sesja {round(hours, 2)}h | {ci_dt.strftime("%H:%M")}→{co_dt.strftime("%H:%M")}',
+                   note=note,
                    transaction_type='clock', reference_id=sess_id)
     return {
         'hours': round(hours, 4), 'minutes': round(mins, 1),
-        'points_earned': pts, 'clock_in_time': ci_dt, 'clock_out_time': co_dt,
+        'points_earned': pts, 'base_pts': base_pts,
+        'job_bonus_pph': job_bonus_pph, 'effective_pph': effective_pph,
+        'clock_in_time': ci_dt, 'clock_out_time': co_dt,
         'session_id': sess_id, 'enough_time': mins >= min_min,
     }
 
@@ -1299,16 +1344,18 @@ def get_job_by_name(guild_id: int, name: str) -> Optional[Dict]:
 def create_job(guild_id: int, name: str, required_points: float = 0,
                icon: str = '💼', color: str = '#7289da',
                description: str = '', role_id: int = None,
-               display_order: int = 0) -> Optional[Dict]:
+               display_order: int = 0,
+               points_bonus_per_hour: float = 0) -> Optional[Dict]:
     with _lock:
         with _get_conn() as conn:
             try:
                 cur = conn.execute(
                     '''INSERT INTO jobs
-                       (guild_id,name,required_points,icon,color,description,role_id,display_order)
-                       VALUES (?,?,?,?,?,?,?,?)''',
+                       (guild_id,name,required_points,icon,color,description,
+                        role_id,display_order,points_bonus_per_hour)
+                       VALUES (?,?,?,?,?,?,?,?,?)''',
                     (guild_id, name, required_points, icon, color, description,
-                     role_id, display_order)
+                     role_id, display_order, points_bonus_per_hour)
                 )
                 conn.commit()
                 return get_job_by_id(cur.lastrowid)
@@ -1421,3 +1468,246 @@ def get_job_members(guild_id: int, job_id: int) -> List[Dict]:
                ORDER BY COALESCE(u.points, 0) DESC''',
             (guild_id, job_id)
         ).fetchall()]
+
+
+# ─── Full Backup / Import ──────────────────────────────────────────────────────
+
+def get_full_backup(guild_id: int) -> dict:
+    """Return a complete snapshot of every table for this guild."""
+    with _get_conn() as conn:
+        def _all(table, where='guild_id=?'):
+            return [dict(r) for r in
+                    conn.execute(f'SELECT * FROM {table} WHERE {where}', (guild_id,)).fetchall()]
+
+        return {
+            'version':            '2.0',
+            'guild_id':           guild_id,
+            'exported_at':        datetime.now().isoformat(),
+            'guild_config':       dict(conn.execute(
+                                      'SELECT * FROM guilds WHERE guild_id=?', (guild_id,)
+                                  ).fetchone() or {}),
+            'users':              _all('users'),
+            'ranks':              _all('ranks'),
+            'factions':           _all('factions'),
+            'jobs':               _all('jobs'),
+            'warnings':           _all('warnings'),
+            'user_special_ranks': _all('user_special_ranks'),
+            'faction_members':    _all('faction_members'),
+            'user_jobs':          _all('user_jobs'),
+            'clock_sessions':     _all('clock_sessions'),
+            'point_transactions': _all('point_transactions'),
+        }
+
+
+def bulk_import_sessions(guild_id: int, sessions: list) -> int:
+    """INSERT OR IGNORE clock sessions from a backup. Returns count inserted."""
+    inserted = 0
+    with _lock:
+        with _get_conn() as conn:
+            for s in sessions:
+                try:
+                    conn.execute(
+                        '''INSERT OR IGNORE INTO clock_sessions
+                           (id, user_id, guild_id, clock_in_time, clock_out_time,
+                            hours_worked, points_earned, session_date, flagged, created_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                        (s.get('id'), int(s['user_id']), guild_id,
+                         s.get('clock_in_time'), s.get('clock_out_time'),
+                         float(s.get('hours_worked', 0)), float(s.get('points_earned', 0)),
+                         s.get('session_date', ''), int(s.get('flagged', 0)),
+                         s.get('created_at'))
+                    )
+                    if conn.execute('SELECT changes()').fetchone()[0]:
+                        inserted += 1
+                except Exception:
+                    pass
+            conn.commit()
+    return inserted
+
+
+def bulk_import_transactions(guild_id: int, transactions: list) -> int:
+    """INSERT OR IGNORE point_transactions from a backup. Returns count inserted."""
+    inserted = 0
+    with _lock:
+        with _get_conn() as conn:
+            for t in transactions:
+                try:
+                    conn.execute(
+                        '''INSERT OR IGNORE INTO point_transactions
+                           (id, user_id, guild_id, points_change, points_before, points_after,
+                            transaction_type, note, assigned_by, reference_id, created_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+                        (t.get('id'), int(t['user_id']), guild_id,
+                         float(t.get('points_change', 0)), float(t.get('points_before', 0)),
+                         float(t.get('points_after', 0)), t.get('transaction_type', 'manual'),
+                         t.get('note', ''), t.get('assigned_by'), t.get('reference_id'),
+                         t.get('created_at'))
+                    )
+                    if conn.execute('SELECT changes()').fetchone()[0]:
+                        inserted += 1
+                except Exception:
+                    pass
+            conn.commit()
+    return inserted
+
+
+# ─── Devices (ESP32 physical devices) ────────────────────────────────────────
+
+def get_devices(guild_id: int) -> List[Dict]:
+    with _get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            'SELECT * FROM devices WHERE guild_id=? ORDER BY name',
+            (guild_id,)
+        ).fetchall()]
+
+
+def get_all_devices() -> List[Dict]:
+    with _get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            'SELECT * FROM devices ORDER BY guild_id, name'
+        ).fetchall()]
+
+
+def get_device(device_id: str) -> Optional[Dict]:
+    with _get_conn() as conn:
+        row = conn.execute('SELECT * FROM devices WHERE device_id=?', (device_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def get_device_by_secret(api_secret: str) -> Optional[Dict]:
+    with _get_conn() as conn:
+        row = conn.execute('SELECT * FROM devices WHERE api_secret=?', (api_secret,)).fetchone()
+        return dict(row) if row else None
+
+
+def add_device(device_id: str, guild_id: int, name: str,
+               bot_token: str = '', user_id: int = None) -> bool:
+    import uuid
+    secret = uuid.uuid4().hex
+    with _lock:
+        with _get_conn() as conn:
+            try:
+                conn.execute(
+                    '''INSERT INTO devices (device_id, guild_id, user_id, name, bot_token, api_secret)
+                       VALUES (?,?,?,?,?,?)''',
+                    (device_id, guild_id, user_id, name, bot_token, secret)
+                )
+                conn.commit()
+                return True
+            except Exception:
+                return False
+
+
+def update_device(device_id: str, **kwargs) -> None:
+    if not kwargs:
+        return
+    cols = ', '.join(f'{k}=?' for k in kwargs)
+    vals = list(kwargs.values()) + [device_id]
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute(f'UPDATE devices SET {cols} WHERE device_id=?', vals)
+            conn.commit()
+
+
+def delete_device(device_id: str) -> None:
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute('DELETE FROM devices WHERE device_id=?', (device_id,))
+            conn.commit()
+
+
+def update_device_heartbeat(device_id: str) -> None:
+    now = datetime.now().isoformat()
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute(
+                "UPDATE devices SET last_heartbeat=?, status='online' WHERE device_id=?",
+                (now, device_id)
+            )
+            conn.commit()
+
+
+def set_device_status(device_id: str, status: str) -> None:
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute('UPDATE devices SET status=? WHERE device_id=?', (status, device_id))
+            conn.commit()
+
+
+# ─── Channels (audio channels for ESP32 PTT routing) ──────────────────────────
+
+def get_channels(guild_id: int) -> List[Dict]:
+    with _get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            'SELECT * FROM channels WHERE guild_id=? ORDER BY order_index, name',
+            (guild_id,)
+        ).fetchall()]
+
+
+def get_channel(channel_id: int) -> Optional[Dict]:
+    with _get_conn() as conn:
+        row = conn.execute('SELECT * FROM channels WHERE id=?', (channel_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def get_radio_bridge_channel(guild_id: int) -> Optional[Dict]:
+    """Return the channel marked as radio bridge (physical walkie-talkie)."""
+    with _get_conn() as conn:
+        row = conn.execute(
+            'SELECT * FROM channels WHERE guild_id=? AND is_radio_bridge=1 ORDER BY order_index LIMIT 1',
+            (guild_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def create_channel(guild_id: int, name: str, discord_channel_id: int = None,
+                   bot_id: str = None, order_index: int = 0,
+                   is_radio_bridge: bool = False) -> Optional[Dict]:
+    with _lock:
+        with _get_conn() as conn:
+            try:
+                cur = conn.execute(
+                    '''INSERT INTO channels (guild_id, name, discord_channel_id, bot_id,
+                       order_index, is_radio_bridge)
+                       VALUES (?,?,?,?,?,?)''',
+                    (guild_id, name, discord_channel_id, bot_id, order_index,
+                     1 if is_radio_bridge else 0)
+                )
+                conn.commit()
+                return get_channel(cur.lastrowid)
+            except Exception:
+                return None
+
+
+def update_channel(channel_id: int, **kwargs) -> None:
+    if not kwargs:
+        return
+    cols = ', '.join(f'{k}=?' for k in kwargs)
+    vals = list(kwargs.values()) + [channel_id]
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute(f'UPDATE channels SET {cols} WHERE id=?', vals)
+            conn.commit()
+
+
+def delete_channel(channel_id: int) -> None:
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute('DELETE FROM channels WHERE id=?', (channel_id,))
+            conn.commit()
+
+
+def get_next_channel(guild_id: int, current_channel_id: int) -> Optional[Dict]:
+    """Return the next channel in order_index cycle, wrapping around."""
+    channels = get_channels(guild_id)
+    if not channels:
+        return None
+    if current_channel_id is None:
+        return channels[0]
+    ids = [c['id'] for c in channels]
+    try:
+        idx = ids.index(current_channel_id)
+        next_idx = (idx + 1) % len(ids)
+    except ValueError:
+        next_idx = 0
+    return channels[next_idx]

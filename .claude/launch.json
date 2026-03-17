@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Baza MOPS (bot + dashboard)",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-X", "utf8", "main.py"],
+      "port": 5000
+    }
+  ]
+}

@@ -2,16 +2,38 @@ import os
 import io
 import csv
 import json
+import secrets as _secrets
+import threading
 import requests
 from datetime import datetime, timezone
 from functools import wraps
 from flask import (Flask, render_template, request, redirect,
                    url_for, session, flash, jsonify, Response)
+from flask_sock import Sock
 import database as db
 
 app = Flask(__name__, template_folder='templates')
-app.secret_key = os.environ.get('DASHBOARD_SECRET', 'change-me-in-production')
+
+def _get_secret_key():
+    if s := os.environ.get('DASHBOARD_SECRET'):
+        return s
+    key_file = os.path.join(os.path.dirname(__file__), '..', 'data', '.secret_key')
+    os.makedirs(os.path.dirname(key_file), exist_ok=True)
+    try:
+        with open(key_file) as f:
+            key = f.read().strip()
+            if key:
+                return key
+    except FileNotFoundError:
+        pass
+    key = _secrets.token_hex(32)
+    with open(key_file, 'w') as f:
+        f.write(key)
+    return key
+
+app.secret_key = _get_secret_key()
 DISCORD_API = 'https://discord.com/api/v10'
+sock = Sock(app)
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -73,6 +95,128 @@ def _dpatch(path, payload):
     except Exception as exc:
         return None, str(exc)
 
+def _dput(path):
+    """PUT to Discord API without body (role assignment)."""
+    try:
+        r = requests.put(f'{DISCORD_API}{path}',
+                         headers={'Authorization': f'Bot {_tok()}'},
+                         timeout=5)
+        return r.ok
+    except Exception:
+        return False
+
+def _ddel(path):
+    """DELETE to Discord API (role removal)."""
+    try:
+        r = requests.delete(f'{DISCORD_API}{path}',
+                            headers={'Authorization': f'Bot {_tok()}'},
+                            timeout=5)
+        return r.ok
+    except Exception:
+        return False
+
+def _sync_faction_discord_roles(guild_id: int, user_id: int, faction: dict, add: bool):
+    """Add or remove all Discord marker roles for a faction.
+    Also handles the base rank (Rekrut) role for the faction.
+    """
+    try:
+        role_ids = json.loads(faction.get('role_ids') or '[]')
+        for rid in role_ids:
+            if add:
+                _dput(f'/guilds/{guild_id}/members/{user_id}/roles/{rid}')
+            else:
+                _ddel(f'/guilds/{guild_id}/members/{user_id}/roles/{rid}')
+    except Exception:
+        pass
+
+    # Also add/remove the base Rekrut rank Discord role for the faction
+    try:
+        all_ranks = db.get_ranks(guild_id)
+        faction_ranks = [
+            r for r in all_ranks
+            if r.get('faction_id') == faction['id']
+            and not r.get('is_special') and not r.get('is_owner_only')
+        ]
+        if faction_ranks:
+            faction_ranks.sort(key=lambda r: r.get('required_points', 0))
+            base_rank = faction_ranks[0]
+            if base_rank.get('role_id'):
+                if add:
+                    _dput(f'/guilds/{guild_id}/members/{user_id}/roles/{base_rank["role_id"]}')
+                else:
+                    # Remove ALL faction rank roles on faction removal
+                    for r in faction_ranks:
+                        if r.get('role_id'):
+                            _ddel(f'/guilds/{guild_id}/members/{user_id}/roles/{r["role_id"]}')
+    except Exception:
+        pass
+
+
+def _sync_auto_rank_role(guild_id: int, user_id: int, old_role_id):
+    """After a points change, remove old auto-rank Discord role and assign the new one.
+
+    Call this AFTER the DB points have already been updated so that
+    get_user_auto_rank() returns the rank matching the new points value.
+    """
+    try:
+        new_rank    = db.get_user_auto_rank(user_id, guild_id)
+        new_role_id = new_rank.get('role_id') if new_rank else None
+
+        # Nothing changed – skip all API calls
+        if old_role_id == new_role_id:
+            return
+
+        # Remove previous auto-rank role (if any)
+        if old_role_id:
+            _ddel(f'/guilds/{guild_id}/members/{user_id}/roles/{old_role_id}')
+
+        # Assign new auto-rank role (if any)
+        if new_role_id:
+            _dput(f'/guilds/{guild_id}/members/{user_id}/roles/{new_role_id}')
+    except Exception:
+        pass   # sync is best-effort; never crash the dashboard action
+
+def _split_regulamin(content, max_len=1900):
+    """Split regulamin into chunks ≤ max_len chars, breaking at blank lines."""
+    lines = content.split('\n')
+    chunks, current, current_len = [], [], 0
+    for line in lines:
+        line_len = len(line) + 1
+        if current_len + line_len > max_len and current:
+            chunks.append('\n'.join(current))
+            current, current_len = [line], line_len
+        else:
+            current.append(line)
+            current_len += line_len
+    if current:
+        chunks.append('\n'.join(current))
+    return [c for c in chunks if c.strip()]
+
+
+def _calculate_balanced_bonuses(jobs, base_pph):
+    """Calculate balanced points_bonus_per_hour for each job.
+
+    Formula: bonus = sqrt(required_points / max_required_points) * base_pph
+    Rounded to nearest 0.5. Jobs with 0 required_points get a minimum 0.5 bonus.
+    """
+    import math
+    if not jobs:
+        return {}
+    max_pts = max((j.get('required_points') or 0) for j in jobs)
+    result = {}
+    for j in jobs:
+        req = j.get('required_points') or 0
+        if max_pts > 0:
+            ratio = math.sqrt(req / max_pts) if req > 0 else 0.0
+        else:
+            ratio = 0.0
+        raw = ratio * base_pph
+        bonus = round(raw * 2) / 2   # round to nearest 0.5
+        bonus = max(bonus, 0.5 if req > 0 else 0.0)
+        result[j['id']] = bonus
+    return result
+
+
 def _guild_info(guild_id):
     info = _dget(f'/guilds/{guild_id}')
     return info or {}
@@ -108,7 +252,9 @@ app.jinja_env.filters['bitand']    = lambda x, mask: int(x or 0) & int(mask)
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        if request.form.get('password') == os.environ.get('DASHBOARD_PASSWORD', 'admin'):
+        provided = request.form.get('password', '')
+        expected = os.environ.get('DASHBOARD_PASSWORD', 'admin')
+        if _secrets.compare_digest(provided, expected):
             session['logged_in'] = True
             return redirect(url_for('index'))
         flash('Nieprawidłowe hasło.', 'danger')
@@ -251,6 +397,7 @@ def user_detail(guild_id, user_id):
     txs          = db.get_user_transactions(user_id, guild_id, limit=20)
     warns        = db.get_warnings(user_id, guild_id)
     all_special_ranks = db.get_ranks(guild_id, special_only=True)
+    all_ranks         = db.get_ranks(guild_id)
     rank_history = db.get_rank_history(user_id, guild_id, limit=20)
     user_faction = db.get_user_faction_membership(user_id, guild_id)
     factions     = db.get_factions(guild_id)
@@ -265,7 +412,7 @@ def user_detail(guild_id, user_id):
         guild_id=guild_id, guild_name=info.get('name', str(guild_id)),
         user=user, user_id=user_id, auto_rank=auto_rank, next_rank=next_rank,
         specials=specials, sessions=sessions, txs=txs, warns=warns,
-        all_special_ranks=all_special_ranks, avatar_url=avatar_url,
+        all_special_ranks=all_special_ranks, all_ranks=all_ranks, avatar_url=avatar_url,
         rank_history=rank_history, warn_limit=cfg.get('warn_limit', 3),
         user_faction=user_faction, factions=factions,
         user_jobs=user_jobs, all_jobs=all_jobs)
@@ -278,7 +425,12 @@ def add_points_action(guild_id, user_id):
     if request.form.get('operation') == 'subtract':
         pts = -pts
     db.ensure_user(user_id, guild_id)
+    # Capture current auto-rank role before the change
+    _old_rank    = db.get_user_auto_rank(user_id, guild_id)
+    _old_role_id = _old_rank.get('role_id') if _old_rank else None
     db.add_points(user_id, guild_id, pts, note=note, transaction_type='manual', assigned_by=0)
+    # Sync Discord role to reflect new auto-rank
+    _sync_auto_rank_role(guild_id, user_id, _old_role_id)
     db.log_action(guild_id, 'points_add', user_id=user_id,
                   details={'delta': pts, 'note': note, 'by': 'dashboard'})
     flash(f'Punkty zaktualizowane ({pts:+.1f}).', 'success')
@@ -290,7 +442,12 @@ def set_points_action(guild_id, user_id):
     pts  = float(request.form.get('points', 0))
     note = request.form.get('note', 'Dashboard – ręczne ustawienie')
     db.ensure_user(user_id, guild_id)
+    # Capture current auto-rank role before the change
+    _old_rank    = db.get_user_auto_rank(user_id, guild_id)
+    _old_role_id = _old_rank.get('role_id') if _old_rank else None
     db.set_points(user_id, guild_id, pts, note=note, assigned_by=0)
+    # Sync Discord role to reflect new auto-rank
+    _sync_auto_rank_role(guild_id, user_id, _old_role_id)
     flash(f'Ustawiono {pts:.1f} pkt.', 'success')
     return redirect(url_for('user_detail', guild_id=guild_id, user_id=user_id))
 
@@ -346,8 +503,32 @@ def give_rank_action(guild_id, user_id):
     rank_id = int(request.form.get('rank_id', 0))
     note    = request.form.get('note', '')
     db.ensure_user(user_id, guild_id)
-    ok = db.give_special_rank(user_id, guild_id, rank_id, assigned_by=0, note=note)
-    flash('Ranga nadana.' if ok else 'Użytkownik już posiada rangę.', 'success' if ok else 'warning')
+    rank = db.get_rank_by_id(rank_id)
+    if not rank:
+        flash('Ranga nie istnieje.', 'danger')
+        return redirect(url_for('user_detail', guild_id=guild_id, user_id=user_id))
+
+    if rank.get('is_special') or rank.get('is_owner_only'):
+        # Give special/owner rank directly
+        ok = db.give_special_rank(user_id, guild_id, rank_id, assigned_by=0, note=note)
+        if ok:
+            if rank.get('role_id'):
+                _dput(f'/guilds/{guild_id}/members/{user_id}/roles/{rank["role_id"]}')
+            flash(f'Ranga specjalna {rank["icon"]} {rank["name"]} nadana.', 'success')
+        else:
+            flash('Użytkownik już posiada tę rangę.', 'warning')
+    else:
+        # Auto-rank: raise points to the required threshold and sync Discord role
+        req_pts = rank.get('required_points', 0)
+        _old_rank    = db.get_user_auto_rank(user_id, guild_id)
+        _old_role_id = _old_rank.get('role_id') if _old_rank else None
+        user = db.get_user(user_id, guild_id)
+        cur_pts = user.get('points', 0) if user else 0
+        if cur_pts < req_pts:
+            full_note = f'Admin nadał rangę: {rank["name"]}' + (f' – {note}' if note else '')
+            db.set_points(user_id, guild_id, req_pts, note=full_note, assigned_by=0)
+        _sync_auto_rank_role(guild_id, user_id, _old_role_id)
+        flash(f'Ranga {rank["icon"]} {rank["name"]} ustawiona (punkty: {max(cur_pts, req_pts):.0f}).', 'success')
     return redirect(url_for('user_detail', guild_id=guild_id, user_id=user_id))
 
 @app.route('/guild/<int:guild_id>/users/<int:user_id>/notes', methods=['POST'])
@@ -361,8 +542,12 @@ def save_user_notes(guild_id, user_id):
 @app.route('/guild/<int:guild_id>/users/<int:user_id>/takerank/<int:rank_id>', methods=['POST'])
 @login_required
 def take_rank_action(guild_id, user_id, rank_id):
+    # Sync: remove Discord role BEFORE removing from DB
+    rank = db.get_rank_by_id(rank_id)
+    if rank and rank.get('role_id'):
+        _ddel(f'/guilds/{guild_id}/members/{user_id}/roles/{rank["role_id"]}')
     db.remove_special_rank(user_id, guild_id, rank_id)
-    flash('Ranga odebrana.', 'warning')
+    flash('Ranga odebrana i rola Discord usunięta.', 'warning')
     return redirect(url_for('user_detail', guild_id=guild_id, user_id=user_id))
 
 @app.route('/guild/<int:guild_id>/users/<int:user_id>/assignfaction', methods=['POST'])
@@ -378,14 +563,36 @@ def assign_faction_action(guild_id, user_id):
         return redirect(url_for('user_detail', guild_id=guild_id, user_id=user_id))
     db.ensure_user(user_id, guild_id)
     ok = db.assign_faction_member(user_id, guild_id, int(faction_id), assigned_by=0)
-    flash(f'Przypisano do frakcji {f["icon"]} {f["name"]}.' if ok else 'Błąd przypisania.', 'success' if ok else 'danger')
+    if ok:
+        # Sync Discord roles: add faction marker roles + base Rekrut role
+        _sync_faction_discord_roles(guild_id, user_id, f, add=True)
+        flash(f'Przypisano do frakcji {f["icon"]} {f["name"]} i dodano role Discord.', 'success')
+    else:
+        flash('Błąd przypisania do frakcji.', 'danger')
     return redirect(url_for('user_detail', guild_id=guild_id, user_id=user_id))
 
 @app.route('/guild/<int:guild_id>/users/<int:user_id>/removefaction', methods=['POST'])
 @login_required
 def remove_faction_action(guild_id, user_id):
+    # Capture faction before removing from DB
+    fm = db.get_user_faction_membership(user_id, guild_id)
     ok = db.remove_faction_member(user_id, guild_id)
-    flash('Usunięto z frakcji.' if ok else 'Użytkownik nie jest w żadnej frakcji.', 'success' if ok else 'warning')
+    if ok and fm:
+        # Remove faction marker roles + all faction rank Discord roles
+        faction = db.get_faction_by_id(fm['faction_id'])
+        if faction:
+            _sync_faction_discord_roles(guild_id, user_id, faction, add=False)
+        # Sync auto-rank: user is now civilian, remove old faction rank role
+        _old_rank_role = None
+        try:
+            all_ranks = db.get_ranks(guild_id)
+            for r in all_ranks:
+                if r.get('faction_id') == fm['faction_id'] and r.get('role_id'):
+                    _ddel(f'/guilds/{guild_id}/members/{user_id}/roles/{r["role_id"]}')
+        except Exception:
+            pass
+    flash('Usunięto z frakcji i usunięto role Discord.' if ok else 'Użytkownik nie jest w żadnej frakcji.',
+          'success' if ok else 'warning')
     return redirect(url_for('user_detail', guild_id=guild_id, user_id=user_id))
 
 @app.route('/guild/<int:guild_id>/users/<int:user_id>/givejob', methods=['POST'])
@@ -529,17 +736,22 @@ def config_page(guild_id):
     except Exception:
         admin_role_ids = []
     schedule = db.get_embed_schedule(guild_id)
+    try:
+        regulamin_msg_count = len(json.loads(cfg.get('regulamin_message_ids') or '[]'))
+    except Exception:
+        regulamin_msg_count = 0
     return render_template('config.html',
         guild_id=guild_id, guild_name=info.get('name', str(guild_id)),
         cfg=cfg, text_channels=text_channels, guild_roles=guild_roles,
         admin_role_ids=admin_role_ids, schedule=schedule,
-        days_pl=db.DAYS_PL)
+        days_pl=db.DAYS_PL, regulamin_msg_count=regulamin_msg_count)
 
 @app.route('/guild/<int:guild_id>/config', methods=['POST'])
 @login_required
 def config_save(guild_id):
     updates = {}
-    for field in ('clock_channel_id', 'log_channel_id', 'command_panel_channel_id'):
+    for field in ('clock_channel_id', 'log_channel_id', 'command_panel_channel_id',
+                  'regulamin_channel_id'):
         v = request.form.get(field, '').strip()
         updates[field] = int(v) if v.isdigit() else None
     for field, default in (('points_per_hour', 10.0), ('min_clock_minutes', 5),
@@ -572,10 +784,74 @@ def config_save(guild_id):
         except Exception:
             schedule[str(i)] = {'hour': 0, 'minute': 0, 'enabled': enabled}
     updates['embed_schedule'] = json.dumps(schedule)
+    updates['auto_balance_jobs'] = 1 if request.form.get('auto_balance_jobs') == '1' else 0
     if updates:
         db.update_guild(guild_id, **updates)
+        # Auto-rebalance job bonuses when base pph changes and toggle is on
+        if updates.get('auto_balance_jobs') and 'points_per_hour' in updates:
+            jobs = db.get_jobs(guild_id)
+            for job_id, bonus in _calculate_balanced_bonuses(jobs, updates['points_per_hour']).items():
+                db.update_job(job_id, points_bonus_per_hour=bonus)
         flash('Konfiguracja zapisana.', 'success')
     return redirect(url_for('config_page', guild_id=guild_id))
+
+
+@app.route('/guild/<int:guild_id>/publish-regulamin', methods=['POST'])
+@login_required
+def publish_regulamin(guild_id):
+    import hashlib
+    cfg = db.get_guild(guild_id) or {}
+    ch_id = cfg.get('regulamin_channel_id')
+    if not ch_id:
+        flash('Najpierw ustaw kanał regulaminu w konfiguracji.', 'danger')
+        return redirect(url_for('config_page', guild_id=guild_id))
+
+    reg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'REGULAMIN.md')
+    try:
+        with open(reg_path, encoding='utf-8') as f:
+            content = f.read()
+    except Exception as e:
+        flash(f'Nie można odczytać REGULAMIN.md: {e}', 'danger')
+        return redirect(url_for('config_page', guild_id=guild_id))
+
+    # Delete old messages
+    try:
+        old_ids = json.loads(cfg.get('regulamin_message_ids') or '[]')
+    except Exception:
+        old_ids = []
+    for msg_id in old_ids:
+        _ddel(f'/channels/{ch_id}/messages/{msg_id}')
+
+    # Send new messages
+    chunks = _split_regulamin(content)
+    new_ids = []
+    for chunk in chunks:
+        data, _ = _dpost(f'/channels/{ch_id}/messages', {'content': chunk})
+        if data:
+            new_ids.append(data['id'])
+
+    file_hash = hashlib.md5(content.encode()).hexdigest()
+    db.update_guild(guild_id,
+                    regulamin_message_ids=json.dumps(new_ids),
+                    regulamin_file_hash=file_hash)
+    flash(f'Regulamin opublikowany ({len(new_ids)} wiadomości) w <#{ch_id}>.', 'success')
+    return redirect(url_for('config_page', guild_id=guild_id))
+
+
+@app.route('/guild/<int:guild_id>/jobs/balance', methods=['POST'])
+@login_required
+def balance_jobs(guild_id):
+    cfg = db.get_guild(guild_id) or {}
+    base_pph = float(cfg.get('points_per_hour') or 10.0)
+    jobs = db.get_jobs(guild_id)
+    if not jobs:
+        flash('Brak prac do zbalansowania.', 'warning')
+        return redirect(url_for('jobs_page', guild_id=guild_id))
+    bonuses = _calculate_balanced_bonuses(jobs, base_pph)
+    for job_id, bonus in bonuses.items():
+        db.update_job(job_id, points_bonus_per_hour=bonus)
+    flash(f'Zbalansowano bonusy pkt/h dla {len(bonuses)} prac (stawka bazowa: {base_pph} pkt/h).', 'success')
+    return redirect(url_for('jobs_page', guild_id=guild_id))
 
 
 # ─── Permissions ──────────────────────────────────────────────────────────────
@@ -814,6 +1090,10 @@ def job_create(guild_id):
     except ValueError:
         req_pts = 0.0
     role_id = int(role_id_raw) if role_id_raw.isdigit() else None
+    try:
+        bonus_pph = float(request.form.get('points_bonus_per_hour', '0').strip())
+    except ValueError:
+        bonus_pph = 0.0
     if not name:
         flash('Nazwa pracy jest wymagana.', 'danger')
         return redirect(url_for('jobs_page', guild_id=guild_id))
@@ -821,7 +1101,7 @@ def job_create(guild_id):
         flash(f'Praca "{name}" już istnieje.', 'danger')
         return redirect(url_for('jobs_page', guild_id=guild_id))
     db.create_job(guild_id, name, req_pts, icon=icon, color=color,
-                  description=desc, role_id=role_id)
+                  description=desc, role_id=role_id, points_bonus_per_hour=bonus_pph)
     flash(f'Praca {icon} {name} utworzona.', 'success')
     return redirect(url_for('jobs_page', guild_id=guild_id))
 
@@ -843,9 +1123,14 @@ def job_edit(guild_id, job_id):
         req_pts = float(req_pts_raw)
     except ValueError:
         req_pts = j['required_points']
+    try:
+        bonus_pph = float(request.form.get('points_bonus_per_hour', '0').strip())
+    except ValueError:
+        bonus_pph = j.get('points_bonus_per_hour', 0.0)
     role_id = int(role_id_raw) if role_id_raw.isdigit() else None
     db.update_job(job_id, name=name, icon=icon, color=color,
-                  description=desc, required_points=req_pts, role_id=role_id)
+                  description=desc, required_points=req_pts,
+                  role_id=role_id, points_bonus_per_hour=bonus_pph)
     flash(f'Praca {icon} {name} zaktualizowana.', 'success')
     return redirect(url_for('jobs_page', guild_id=guild_id))
 
@@ -909,6 +1194,11 @@ MOPS_ROLES = [
     {'name': 'Porucznik',       'color': 0x708090, 'hoist': False, 'perms': 0},
     {'name': 'Szeregowy',       'color': 0x4682B4, 'hoist': False, 'perms': 0},
     {'name': 'Rekrut',          'color': 0x2F4F4F, 'hoist': False, 'perms': 0},
+    # ── Epsilon-11 Policja ───────────────────────────────────────────────────────
+    {'name': 'Generał Epsilon-11', 'color': 0x4169E1, 'hoist': True,
+     'perms': _RP_KICK|_RP_BAN|_RP_MANAGE_M|_RP_MUTE|_RP_MOVE},
+    {'name': 'Epsilon-11',         'color': 0x6495ED, 'hoist': True,
+     'perms': _RP_MANAGE_M|_RP_MUTE|_RP_MOVE},
     # ── Prace cywilne ────────────────────────────────────────────────────────────
     {'name': 'Kowal',           'color': 0x888888, 'hoist': False, 'perms': 0},
     {'name': 'Farmer',          'color': 0x55AA55, 'hoist': False, 'perms': 0},
@@ -929,11 +1219,11 @@ MOPS_CHANNELS = [
     ]),
     ('⚔️-wojsko', [
         ('wojsko-ogólne', 0), ('rozkazy', 0), ('raporty', 0),
-        ('alpha-1-czat', 0), ('nu-7-czat', 0), ('planowanie', 0),
+        ('alpha-1-czat', 0), ('nu-7-czat', 0), ('epsilon-11-czat', 0), ('planowanie', 0),
     ]),
     ('🔊-radio', [
         ('Radio Ogólne', 2), ('Radio Alpha-1', 2),
-        ('Radio Nu-7', 2), ('Gabinet Króla', 2),
+        ('Radio Nu-7', 2), ('Radio Epsilon-11', 2), ('Gabinet Króla', 2),
     ]),
     # Kategoria administracji – niewidoczna dla zwykłych użytkowników
     ('🔒-administracja', [
@@ -944,10 +1234,12 @@ MOPS_CHANNELS = [
 ]
 
 MOPS_FACTIONS = [
-    {'name': 'Alpha-1', 'icon': '🔴', 'color': '#CC0000',
+    {'name': 'Alpha-1',    'icon': '🔴', 'color': '#CC0000',
      'description': 'Gwardia Królewska – osobista ochrona Króla i Księcia'},
-    {'name': 'Nu-7',    'icon': '🔵', 'color': '#0055FF',
+    {'name': 'Nu-7',       'icon': '🔵', 'color': '#0055FF',
      'description': 'Podstawowa jednostka wojskowa'},
+    {'name': 'Epsilon-11', 'icon': '🟦', 'color': '#4169E1',
+     'description': 'Policja Bazy MOPS – porządek publiczny i ochrona cywilów'},
 ]
 
 MOPS_SPECIAL_RANKS = [
@@ -1006,6 +1298,29 @@ MOPS_FACTION_RANKS = [
     {'name': 'Generał Nu-7',         'faction': 'Nu-7',    'role': 'Generał Nu-7',
      'icon': '🎖️', 'pts': 0,  'color': '#003399', 'special': True,  'owner_only': True,
      'description': 'Generał Nu-7 – dowódca jednostki, nadawany przez admina'},
+
+    # ── Epsilon-11 Policja (dół → góra) ────────────────────────────────────────
+    {'name': 'Rekrut E-11',          'faction': 'Epsilon-11', 'role': 'Rekrut',
+     'icon': '🟦', 'pts': 10,  'color': '#2F4F4F', 'special': False, 'owner_only': False,
+     'description': 'Nowy funkcjonariusz Epsilon-11'},
+    {'name': 'Szeregowy E-11',       'faction': 'Epsilon-11', 'role': 'Szeregowy',
+     'icon': '🟦', 'pts': 35,  'color': '#4682B4', 'special': False, 'owner_only': False,
+     'description': 'Funkcjonariusz Epsilon-11'},
+    {'name': 'Porucznik E-11',       'faction': 'Epsilon-11', 'role': 'Porucznik',
+     'icon': '🟦', 'pts': 75,  'color': '#708090', 'special': False, 'owner_only': False,
+     'description': 'Oficer Epsilon-11'},
+    {'name': 'Squad Leader E-11',    'faction': 'Epsilon-11', 'role': 'Squad Leader',
+     'icon': '🟦', 'pts': 130, 'color': '#556B2F', 'special': False, 'owner_only': False,
+     'description': 'Dowódca drużyny Epsilon-11'},
+    {'name': 'Sierżant E-11',        'faction': 'Epsilon-11', 'role': 'Sierżant',
+     'icon': '🟦', 'pts': 200, 'color': '#7B7B00', 'special': False, 'owner_only': False,
+     'description': 'Starszy sierżant Epsilon-11'},
+    {'name': 'Kapitan E-11',         'faction': 'Epsilon-11', 'role': 'Kapitan',
+     'icon': '🟦', 'pts': 0,   'color': '#8B0000', 'special': True,  'owner_only': True,
+     'description': 'Kapitan Epsilon-11 – nadawany przez admina'},
+    {'name': 'Generał Epsilon-11',   'faction': 'Epsilon-11', 'role': 'Generał Epsilon-11',
+     'icon': '🎖️', 'pts': 0,  'color': '#4169E1', 'special': True,  'owner_only': True,
+     'description': 'Komendant Epsilon-11 – dowódca policji, nadzoruje cywilów'},
 ]
 
 MOPS_JOBS = [
@@ -1082,83 +1397,92 @@ MOPS_PERMS = {
         ('Military Police', _PVMS, 0),
     ],
     'logi':  [                             # admin-only; inherits from category
-        ('@everyone',       0,     _PV),
-        ('Król',            _PVMS, 0),
-        ('Książę',          _PVMS, 0),
-        ('Generał',         _PVMS, 0),
-        ('Military Police', _PVMS, 0),
-        ('Generał Nu-7',    _PVMS, 0),
-        ('Alpha-1',         _PVMS, 0),
+        ('@everyone',          0,     _PV),
+        ('Król',               _PVMS, 0),
+        ('Książę',             _PVMS, 0),
+        ('Generał',            _PVMS, 0),
+        ('Military Police',    _PVMS, 0),
+        ('Generał Nu-7',       _PVMS, 0),
+        ('Alpha-1',            _PVMS, 0),
+        ('Generał Epsilon-11', _PVMS, 0),
     ],
 
     # ── 🔒 ADMINISTRACJA ───────────────────────────────────────────────────────
     'admin-panel': [                       # admin bot commands (addpoints, giverank…)
-        ('@everyone',       0,     _PV),
-        ('Król',            _PVMS, 0),
-        ('Książę',          _PVMS, 0),
-        ('Generał',         _PVMS, 0),
-        ('Military Police', _PVMS, 0),
-        ('Generał Nu-7',    _PVMS, 0),
-        ('Alpha-1',         _PVMS, 0),
+        ('@everyone',          0,     _PV),
+        ('Król',               _PVMS, 0),
+        ('Książę',             _PVMS, 0),
+        ('Generał',            _PVMS, 0),
+        ('Military Police',    _PVMS, 0),
+        ('Generał Nu-7',       _PVMS, 0),
+        ('Alpha-1',            _PVMS, 0),
+        ('Generał Epsilon-11', _PVMS, 0),
     ],
     'ostrzeżenia': [                       # moderation history log
-        ('@everyone',       0,     _PV),
-        ('Król',            _PVMS, 0),
-        ('Książę',          _PVMS, 0),
-        ('Generał',         _PVMS, 0),
-        ('Military Police', _PVMS, 0),
-        ('Generał Nu-7',    _PVMS, 0),
-        ('Alpha-1',         _PVMS, 0),
+        ('@everyone',          0,     _PV),
+        ('Król',               _PVMS, 0),
+        ('Książę',             _PVMS, 0),
+        ('Generał',            _PVMS, 0),
+        ('Military Police',    _PVMS, 0),
+        ('Generał Nu-7',       _PVMS, 0),
+        ('Alpha-1',            _PVMS, 0),
+        ('Generał Epsilon-11', _PVMS, 0),
     ],
 
     # ── ⚔️ WOJSKO ──────────────────────────────────────────────────────────────
     'wojsko-ogólne': [                     # all military (Rekrut+), hidden from civilians
-        ('@everyone',    0,     _PV),
-        ('Król',         _PVS,  0),
-        ('Książę',       _PVS,  0),
-        ('Generał',      _PVS,  0),
-        ('Military Police', _PVS, 0),
-        ('Generał Nu-7', _PVS,  0),
-        ('Alpha-1',      _PVS,  0),
-        ('Nu-7',         _PVS,  0),
-        ('Kapitan',      _PVS,  0),
-        ('Sierżant',     _PVS,  0),
-        ('Squad Leader', _PVS,  0),
-        ('Porucznik',    _PVS,  0),
-        ('Szeregowy',    _PVS,  0),
-        ('Rekrut',       _PVS,  0),
+        ('@everyone',          0,     _PV),
+        ('Król',               _PVS,  0),
+        ('Książę',             _PVS,  0),
+        ('Generał',            _PVS,  0),
+        ('Military Police',    _PVS,  0),
+        ('Generał Nu-7',       _PVS,  0),
+        ('Alpha-1',            _PVS,  0),
+        ('Nu-7',               _PVS,  0),
+        ('Generał Epsilon-11', _PVS,  0),
+        ('Epsilon-11',         _PVS,  0),
+        ('Kapitan',            _PVS,  0),
+        ('Sierżant',           _PVS,  0),
+        ('Squad Leader',       _PVS,  0),
+        ('Porucznik',          _PVS,  0),
+        ('Szeregowy',          _PVS,  0),
+        ('Rekrut',             _PVS,  0),
     ],
     'rozkazy': [                           # orders: officers write, enlisted read-only
-        ('@everyone',       0,     _PV),
-        ('Król',            _PVS,  0),
-        ('Książę',          _PVS,  0),
-        ('Generał',         _PVS,  0),
-        ('Military Police', _PVS,  0),
-        ('Generał Nu-7',    _PVS,  0),
-        ('Alpha-1',         _PVS,  0),
-        ('Nu-7',            _PVS,  0),
-        ('Kapitan',         _PVS,  0),
-        ('Sierżant',        _PVS,  0),
-        ('Squad Leader',    _PVS,  0),
-        ('Porucznik',       _PV,   0),  # read-only from Porucznik down
-        ('Szeregowy',       _PV,   0),
-        ('Rekrut',          _PV,   0),
+        ('@everyone',          0,     _PV),
+        ('Król',               _PVS,  0),
+        ('Książę',             _PVS,  0),
+        ('Generał',            _PVS,  0),
+        ('Military Police',    _PVS,  0),
+        ('Generał Nu-7',       _PVS,  0),
+        ('Alpha-1',            _PVS,  0),
+        ('Nu-7',               _PVS,  0),
+        ('Generał Epsilon-11', _PVS,  0),
+        ('Epsilon-11',         _PVS,  0),
+        ('Kapitan',            _PVS,  0),
+        ('Sierżant',           _PVS,  0),
+        ('Squad Leader',       _PVS,  0),
+        ('Porucznik',          _PV,   0),  # read-only from Porucznik down
+        ('Szeregowy',          _PV,   0),
+        ('Rekrut',             _PV,   0),
     ],
     'raporty': [                           # reports: all military can write
-        ('@everyone',       0,     _PV),
-        ('Król',            _PVS,  0),
-        ('Książę',          _PVS,  0),
-        ('Generał',         _PVS,  0),
-        ('Military Police', _PVS,  0),
-        ('Generał Nu-7',    _PVS,  0),
-        ('Alpha-1',         _PVS,  0),
-        ('Nu-7',            _PVS,  0),
-        ('Kapitan',         _PVS,  0),
-        ('Sierżant',        _PVS,  0),
-        ('Squad Leader',    _PVS,  0),
-        ('Porucznik',       _PVS,  0),
-        ('Szeregowy',       _PVS,  0),
-        ('Rekrut',          _PVS,  0),
+        ('@everyone',          0,     _PV),
+        ('Król',               _PVS,  0),
+        ('Książę',             _PVS,  0),
+        ('Generał',            _PVS,  0),
+        ('Military Police',    _PVS,  0),
+        ('Generał Nu-7',       _PVS,  0),
+        ('Alpha-1',            _PVS,  0),
+        ('Nu-7',               _PVS,  0),
+        ('Generał Epsilon-11', _PVS,  0),
+        ('Epsilon-11',         _PVS,  0),
+        ('Kapitan',            _PVS,  0),
+        ('Sierżant',           _PVS,  0),
+        ('Squad Leader',       _PVS,  0),
+        ('Porucznik',          _PVS,  0),
+        ('Szeregowy',          _PVS,  0),
+        ('Rekrut',             _PVS,  0),
     ],
     'alpha-1-czat': [                      # Alpha-1 faction + commanders only
         ('@everyone',       0,     _PV),
@@ -1189,19 +1513,36 @@ MOPS_PERMS = {
         ('Szeregowy',       _PVS,  0),
         ('Rekrut',          _PVS,  0),
     ],
+    'epsilon-11-czat': [                   # Epsilon-11 faction + commanders only
+        ('@everyone',          0,     _PV),
+        ('Król',               _PVS,  0),
+        ('Książę',             _PVS,  0),
+        ('Generał',            _PVS,  0),
+        ('Military Police',    _PVS,  0),
+        ('Generał Epsilon-11', _PVS,  0),
+        ('Epsilon-11',         _PVS,  0),
+        ('Kapitan',            _PVS,  0),
+        ('Sierżant',           _PVS,  0),
+        ('Squad Leader',       _PVS,  0),
+        ('Porucznik',          _PVS,  0),
+        ('Szeregowy',          _PVS,  0),
+        ('Rekrut',             _PVS,  0),
+    ],
     'planowanie': [                        # officers (Porucznik+) and commanders
-        ('@everyone',       0,     _PV),
-        ('Król',            _PVS,  0),
-        ('Książę',          _PVS,  0),
-        ('Generał',         _PVS,  0),
-        ('Military Police', _PVS,  0),
-        ('Generał Nu-7',    _PVS,  0),
-        ('Alpha-1',         _PVS,  0),
-        ('Nu-7',            _PVS,  0),
-        ('Kapitan',         _PVS,  0),
-        ('Sierżant',        _PVS,  0),
-        ('Squad Leader',    _PVS,  0),
-        ('Porucznik',       _PVS,  0),
+        ('@everyone',          0,     _PV),
+        ('Król',               _PVS,  0),
+        ('Książę',             _PVS,  0),
+        ('Generał',            _PVS,  0),
+        ('Military Police',    _PVS,  0),
+        ('Generał Nu-7',       _PVS,  0),
+        ('Alpha-1',            _PVS,  0),
+        ('Nu-7',               _PVS,  0),
+        ('Generał Epsilon-11', _PVS,  0),
+        ('Epsilon-11',         _PVS,  0),
+        ('Kapitan',            _PVS,  0),
+        ('Sierżant',           _PVS,  0),
+        ('Squad Leader',       _PVS,  0),
+        ('Porucznik',          _PVS,  0),
     ],
 
     # ── 🔊 RADIO (voice) ───────────────────────────────────────────────────────
@@ -1235,6 +1576,21 @@ MOPS_PERMS = {
         ('Szeregowy',    _PVC,  0),
         ('Rekrut',       _PVC,  0),
     ],
+    'Radio Epsilon-11': [                   # Epsilon-11 + commanders
+        ('@everyone',          0,     _PVC),
+        ('Król',               _PVC,  0),
+        ('Książę',             _PVC,  0),
+        ('Generał',            _PVC,  0),
+        ('Military Police',    _PVC,  0),
+        ('Generał Epsilon-11', _PVC,  0),
+        ('Epsilon-11',         _PVC,  0),
+        ('Kapitan',            _PVC,  0),
+        ('Sierżant',           _PVC,  0),
+        ('Squad Leader',       _PVC,  0),
+        ('Porucznik',          _PVC,  0),
+        ('Szeregowy',          _PVC,  0),
+        ('Rekrut',             _PVC,  0),
+    ],
     'Gabinet Króla': [                      # royal council only
         ('@everyone',       0,     _PVC),
         ('Król',            _PVC,  0),
@@ -1252,13 +1608,14 @@ MOPS_CAT_PERMS = {
     '⚔️-wojsko':        [('@everyone', 0, _PV)],      # military only by default
     '🔊-radio':         [('@everyone', 0, _PVC)],     # per-channel controlled
     '🔒-administracja': [                             # fully hidden from non-admins
-        ('@everyone',       0,     _PV),
-        ('Król',            _PVMS, 0),
-        ('Książę',          _PVMS, 0),
-        ('Generał',         _PVMS, 0),
-        ('Military Police', _PVMS, 0),
-        ('Generał Nu-7',    _PVMS, 0),
-        ('Alpha-1',         _PVMS, 0),
+        ('@everyone',          0,     _PV),
+        ('Król',               _PVMS, 0),
+        ('Książę',             _PVMS, 0),
+        ('Generał',            _PVMS, 0),
+        ('Military Police',    _PVMS, 0),
+        ('Generał Nu-7',       _PVMS, 0),
+        ('Alpha-1',            _PVMS, 0),
+        ('Generał Epsilon-11', _PVMS, 0),
     ],
 }
 
@@ -1643,18 +2000,306 @@ def export_transactions(guild_id):
 @app.route('/guild/<int:guild_id>/backup')
 @login_required
 def backup_guild(guild_id):
-    data = {
-        'guild_id': guild_id,
-        'exported_at': datetime.now().isoformat(),
-        'users': db.get_all_users(guild_id),
-        'ranks': db.get_ranks(guild_id),
-        'warnings': db.get_all_warnings(guild_id, limit=9999),
-        'stats': db.get_guild_stats(guild_id),
-    }
-    out = json.dumps(data, ensure_ascii=False, indent=2, default=str)
+    data = db.get_full_backup(guild_id)
+    out  = json.dumps(data, ensure_ascii=False, indent=2, default=str)
+    fname = f'backup_{guild_id}_{datetime.now().strftime("%Y%m%d_%H%M")}.json'
     return Response(out, mimetype='application/json',
-                    headers={'Content-Disposition':
-                             f'attachment; filename=backup_{guild_id}_{datetime.now().strftime("%Y%m%d")}.json'})
+                    headers={'Content-Disposition': f'attachment; filename={fname}'})
+
+
+# ─── Import ────────────────────────────────────────────────────────────────────
+
+@app.route('/guild/<int:guild_id>/import', methods=['GET', 'POST'])
+@login_required
+def import_page(guild_id):
+    info           = _guild_info(guild_id)
+    guild_name     = info.get('name', str(guild_id)) if info else str(guild_id)
+    preview        = None
+    import_results = session.pop('import_results', None)  # one-shot display
+
+    if request.method == 'POST':
+        f = request.files.get('backup_file')
+        if not f or not f.filename.endswith('.json'):
+            flash('Wybierz plik .json', 'danger')
+            return redirect(url_for('import_page', guild_id=guild_id))
+        try:
+            raw  = f.read().decode('utf-8')
+            data = json.loads(raw)
+        except Exception as exc:
+            flash(f'Błąd parsowania JSON: {exc}', 'danger')
+            return redirect(url_for('import_page', guild_id=guild_id))
+
+        if not any(k in data for k in ('users', 'ranks', 'factions', 'jobs')):
+            flash('Nieprawidłowy format backupu – brak kluczy users/ranks/factions/jobs.', 'danger')
+            return redirect(url_for('import_page', guild_id=guild_id))
+
+        session['import_data']     = raw
+        session['import_guild_id'] = guild_id
+        preview = {
+            'version':            data.get('version', '1.0'),
+            'exported_at':        data.get('exported_at', '—'),
+            'source_guild':       data.get('guild_id', '—'),
+            'users':              len(data.get('users', [])),
+            'ranks':              len(data.get('ranks', [])),
+            'factions':           len(data.get('factions', [])),
+            'jobs':               len(data.get('jobs', [])),
+            'warnings':           len(data.get('warnings', [])),
+            'user_special_ranks': len(data.get('user_special_ranks', [])),
+            'faction_members':    len(data.get('faction_members', [])),
+            'user_jobs':          len(data.get('user_jobs', [])),
+            'clock_sessions':     len(data.get('clock_sessions', [])),
+            'point_transactions': len(data.get('point_transactions', [])),
+            'has_config':         'guild_config' in data,
+        }
+
+    return render_template('import.html',
+                           guild_id=guild_id, guild_name=guild_name,
+                           preview=preview,
+                           import_results=import_results)
+
+
+@app.route('/guild/<int:guild_id>/import/run', methods=['POST'])
+@login_required
+def import_run(guild_id):
+    raw  = session.get('import_data')
+    sgid = session.get('import_guild_id')
+    if not raw or sgid != guild_id:
+        flash('Brak danych importu – prześlij plik ponownie.', 'danger')
+        return redirect(url_for('import_page', guild_id=guild_id))
+
+    data = json.loads(raw)
+    mode = request.form.get('mode', 'merge')   # 'merge' | 'overwrite'
+
+    do_config    = 'do_config'    in request.form
+    do_factions  = 'do_factions'  in request.form
+    do_ranks     = 'do_ranks'     in request.form
+    do_jobs      = 'do_jobs'      in request.form
+    do_users     = 'do_users'     in request.form
+    do_assign    = 'do_assign'    in request.form
+    do_sessions  = 'do_sessions'  in request.form
+    do_warnings  = 'do_warnings'  in request.form
+
+    results = []
+    ok_n = err_n = skip_n = 0
+
+    def _ok(msg):
+        nonlocal ok_n;   ok_n   += 1; results.append(f'✅ {msg}')
+    def _skip(msg):
+        nonlocal skip_n; skip_n += 1; results.append(f'⏭️ {msg}')
+    def _err(msg):
+        nonlocal err_n;  err_n  += 1; results.append(f'❌ {msg}')
+
+    # ID translation tables (backup old_id → current DB id)
+    faction_id_map = {}
+    rank_id_map    = {}
+    job_id_map     = {}
+
+    # ── 1. Guild config ────────────────────────────────────────────────────────
+    if do_config and 'guild_config' in data:
+        try:
+            allowed = {'clock_channel_id', 'log_channel_id', 'command_panel_channel_id',
+                       'job_channel_id', 'points_per_hour', 'min_clock_minutes',
+                       'auto_clockout_hours', 'warn_limit', 'clock_cooldown_min',
+                       'admin_role_ids', 'embed_schedule'}
+            upd = {k: v for k, v in data['guild_config'].items()
+                   if k in allowed and v is not None}
+            if upd:
+                db.update_guild(guild_id, **upd)
+            _ok('Konfiguracja gilda zaktualizowana')
+        except Exception as exc:
+            _err(f'Konfiguracja: {exc}')
+
+    # ── 2. Factions ────────────────────────────────────────────────────────────
+    for fac in data.get('factions', []):
+        existing = db.get_faction_by_name(guild_id, fac['name'])
+        if existing:
+            faction_id_map[fac['id']] = existing['id']
+        if do_factions:
+            if existing:
+                if mode == 'overwrite':
+                    db.update_faction(existing['id'],
+                                      icon=fac.get('icon', '⚔️'),
+                                      color=fac.get('color', '#7289da'),
+                                      description=fac.get('description', ''))
+                    _ok(f'Frakcja {fac["name"]} zaktualizowana')
+                else:
+                    _skip(f'Frakcja {fac["name"]} już istnieje')
+            else:
+                try:
+                    role_ids = json.loads(fac.get('role_ids') or '[]')
+                except Exception:
+                    role_ids = []
+                new = db.create_faction(guild_id, fac['name'],
+                                        icon=fac.get('icon', '⚔️'),
+                                        color=fac.get('color', '#7289da'),
+                                        role_ids=role_ids,
+                                        description=fac.get('description', ''))
+                if new:
+                    faction_id_map[fac['id']] = new['id']
+                    _ok(f'Frakcja {fac["name"]} utworzona')
+                else:
+                    _err(f'Frakcja {fac["name"]} – błąd tworzenia')
+
+    # ── 3. Ranks ───────────────────────────────────────────────────────────────
+    for r in data.get('ranks', []):
+        existing = db.get_rank_by_name(guild_id, r['name'])
+        if existing:
+            rank_id_map[r['id']] = existing['id']
+        if do_ranks:
+            if existing:
+                if mode == 'overwrite':
+                    db.update_rank(existing['id'],
+                                   required_points=float(r.get('required_points', 0)),
+                                   icon=r.get('icon', '⭐'),
+                                   color=r.get('color', '#99aab5'),
+                                   is_special=int(bool(r.get('is_special', 0))),
+                                   is_owner_only=int(bool(r.get('is_owner_only', 0))))
+                    _ok(f'Ranga {r["name"]} zaktualizowana')
+                else:
+                    _skip(f'Ranga {r["name"]} już istnieje')
+            else:
+                old_fid = r.get('faction_id')
+                new = db.create_rank(guild_id, r['name'],
+                                     required_points=float(r.get('required_points', 0)),
+                                     icon=r.get('icon', '⭐'),
+                                     color=r.get('color', '#99aab5'),
+                                     is_special=bool(r.get('is_special', 0)),
+                                     is_owner_only=bool(r.get('is_owner_only', 0)),
+                                     faction_id=faction_id_map.get(old_fid) if old_fid else None)
+                if new:
+                    rank_id_map[r['id']] = new['id']
+                    _ok(f'Ranga {r["name"]} utworzona')
+                else:
+                    _err(f'Ranga {r["name"]} – błąd tworzenia')
+
+    # ── 4. Jobs ────────────────────────────────────────────────────────────────
+    for j in data.get('jobs', []):
+        existing = db.get_job_by_name(guild_id, j['name'])
+        if existing:
+            job_id_map[j['id']] = existing['id']
+        if do_jobs:
+            if existing:
+                if mode == 'overwrite':
+                    db.update_job(existing['id'],
+                                  required_points=float(j.get('required_points', 0)),
+                                  icon=j.get('icon', '💼'),
+                                  color=j.get('color', '#7289da'))
+                    _ok(f'Praca {j["name"]} zaktualizowana')
+                else:
+                    _skip(f'Praca {j["name"]} już istnieje')
+            else:
+                new = db.create_job(guild_id, j['name'],
+                                    required_points=float(j.get('required_points', 0)),
+                                    icon=j.get('icon', '💼'),
+                                    color=j.get('color', '#7289da'),
+                                    description=j.get('description', ''))
+                if new:
+                    job_id_map[j['id']] = new['id']
+                    _ok(f'Praca {j["name"]} utworzona')
+                else:
+                    _err(f'Praca {j["name"]} – błąd tworzenia')
+
+    # ── 5. Users ───────────────────────────────────────────────────────────────
+    if do_users:
+        for u in data.get('users', []):
+            try:
+                uid = int(u['user_id'])
+                db.ensure_user(uid, guild_id,
+                               username=u.get('username', ''),
+                               display_name=u.get('display_name', ''))
+                existing = db.get_user(uid, guild_id)
+                cur_pts  = float(existing.get('points', 0)) if existing else 0.0
+                new_pts  = float(u.get('points', 0))
+                if mode == 'overwrite' or new_pts > cur_pts:
+                    if new_pts != cur_pts:
+                        db.set_points(uid, guild_id, new_pts,
+                                      note='Import z backupu', assigned_by=0)
+                    db.update_user(uid, guild_id,
+                                   total_hours=float(u.get('total_hours', 0)),
+                                   sessions_count=int(u.get('sessions_count', 0)),
+                                   streak_days=int(u.get('streak_days', 0)))
+                    if u.get('is_banned'):
+                        db.update_user(uid, guild_id, is_banned=1)
+                    if u.get('admin_notes'):
+                        db.update_user_notes(uid, guild_id, u['admin_notes'])
+                    _ok(f'Użytkownik {u.get("username") or uid} ({new_pts:.0f} pkt)')
+                else:
+                    _skip(f'Użytkownik {u.get("username") or uid} (aktualne {cur_pts:.0f} ≥ {new_pts:.0f} pkt)')
+            except Exception as exc:
+                _err(f'Użytkownik {u.get("user_id", "?")}: {exc}')
+
+    # ── 6. Assignments (special ranks / factions / jobs) ──────────────────────
+    if do_assign:
+        for sr in data.get('user_special_ranks', []):
+            try:
+                uid    = int(sr['user_id'])
+                new_rid = rank_id_map.get(sr['rank_id'])
+                if not new_rid:
+                    _skip(f'Ranga specjalna uid={uid}: ranga #{sr["rank_id"]} nieznana')
+                    continue
+                if db.give_special_rank(uid, guild_id, new_rid,
+                                        assigned_by=0, note=sr.get('note', '')):
+                    _ok(f'Ranga specjalna → uid={uid}')
+                else:
+                    _skip(f'Ranga specjalna uid={uid} już przypisana')
+            except Exception as exc:
+                _err(f'Ranga specjalna: {exc}')
+
+        for fm in data.get('faction_members', []):
+            try:
+                uid    = int(fm['user_id'])
+                new_fid = faction_id_map.get(fm['faction_id'])
+                if not new_fid:
+                    _skip(f'Frakcja uid={uid}: frakcja #{fm["faction_id"]} nieznana')
+                    continue
+                db.assign_faction_member(uid, guild_id, new_fid, assigned_by=0)
+                _ok(f'Frakcja → uid={uid}')
+            except Exception as exc:
+                _err(f'Frakcja member: {exc}')
+
+        for uj in data.get('user_jobs', []):
+            try:
+                uid    = int(uj['user_id'])
+                new_jid = job_id_map.get(uj['job_id'])
+                if not new_jid:
+                    _skip(f'Praca uid={uid}: praca #{uj["job_id"]} nieznana')
+                    continue
+                if db.select_job(uid, guild_id, new_jid, admin_granted=True, granted_by=0):
+                    _ok(f'Praca → uid={uid}')
+                else:
+                    _skip(f'Praca uid={uid} już przypisana')
+            except Exception as exc:
+                _err(f'Praca przypisanie: {exc}')
+
+    # ── 7. Clock sessions ─────────────────────────────────────────────────────
+    if do_sessions:
+        try:
+            n = db.bulk_import_sessions(guild_id, data.get('clock_sessions', []))
+            _ok(f'Sesje clock-in: {n} nowych')
+            n = db.bulk_import_transactions(guild_id, data.get('point_transactions', []))
+            _ok(f'Transakcje punktów: {n} nowych')
+        except Exception as exc:
+            _err(f'Sesje/transakcje: {exc}')
+
+    # ── 8. Warnings ───────────────────────────────────────────────────────────
+    if do_warnings:
+        for w in data.get('warnings', []):
+            try:
+                db.add_warning(int(w['user_id']), guild_id,
+                               reason=w.get('reason', ''),
+                               warned_by=w.get('warned_by'),
+                               is_auto=bool(w.get('is_auto', 0)))
+                _ok(f'Ostrzeżenie uid={w["user_id"]}')
+            except Exception as exc:
+                _err(f'Ostrzeżenie: {exc}')
+
+    session.pop('import_data', None)
+    session.pop('import_guild_id', None)
+    session['import_results'] = results[-200:]
+
+    status = 'success' if err_n == 0 else 'warning'
+    flash(f'Import zakończony — ✅ {ok_n} sukces · ⏭️ {skip_n} pominięto · ❌ {err_n} błędów.', status)
+    return redirect(url_for('import_page', guild_id=guild_id))
 
 
 # ─── API ──────────────────────────────────────────────────────────────────────
@@ -1675,3 +2320,488 @@ def api_chart_data(guild_id):
 @app.route('/ping')
 def ping():
     return 'OK', 200
+
+
+# ─── Devices (ESP32) ──────────────────────────────────────────────────────────
+
+@app.route('/guild/<int:guild_id>/devices')
+@login_required
+def devices_page(guild_id):
+    cfg = db.get_guild(guild_id) or {}
+    guild_info = _guild_info(guild_id)
+    devices = db.get_devices(guild_id)
+    # Enrich with runtime online status from device_manager
+    try:
+        from device_manager import device_manager
+        for d in devices:
+            bot = device_manager.bots.get(d['device_id'])
+            d['bot_running'] = bool(bot and bot.is_online)
+    except Exception:
+        for d in devices:
+            d['bot_running'] = False
+    channels = db.get_channels(guild_id)
+    channels_map = {c['id']: c for c in channels}
+    return render_template('devices.html',
+                           guild_id=guild_id,
+                           guild_name=guild_info.get('name', str(guild_id)),
+                           devices=devices,
+                           channels=channels,
+                           channels_map=channels_map,
+                           cfg=cfg)
+
+
+@app.route('/guild/<int:guild_id>/devices/add', methods=['POST'])
+@login_required
+def device_add(guild_id):
+    device_id = request.form.get('device_id', '').strip().replace(' ', '_').lower()
+    name = request.form.get('name', '').strip()
+    bot_token = request.form.get('bot_token', '').strip()
+    user_id_raw = request.form.get('user_id', '').strip()
+    if not device_id or not name:
+        flash('Wypełnij ID urządzenia i nazwę.', 'danger')
+        return redirect(url_for('devices_page', guild_id=guild_id))
+    user_id = int(user_id_raw) if user_id_raw.isdigit() else None
+    ok = db.add_device(device_id, guild_id, name, bot_token=bot_token, user_id=user_id)
+    if not ok:
+        flash(f'Urządzenie o ID "{device_id}" już istnieje.', 'danger')
+        return redirect(url_for('devices_page', guild_id=guild_id))
+    # Start bot if token provided
+    if bot_token:
+        try:
+            from device_manager import device_manager
+            device_manager.schedule_restart(device_id)
+        except Exception:
+            pass
+    flash(f'Urządzenie "{name}" dodane.', 'success')
+    return redirect(url_for('devices_page', guild_id=guild_id))
+
+
+@app.route('/guild/<int:guild_id>/devices/<device_id>/edit', methods=['POST'])
+@login_required
+def device_edit(guild_id, device_id):
+    d = db.get_device(device_id)
+    if not d or d['guild_id'] != guild_id:
+        flash('Urządzenie nie znalezione.', 'danger')
+        return redirect(url_for('devices_page', guild_id=guild_id))
+    name = request.form.get('name', '').strip()
+    bot_token = request.form.get('bot_token', '').strip()
+    user_id_raw = request.form.get('user_id', '').strip()
+    user_id = int(user_id_raw) if user_id_raw.isdigit() else None
+    db.update_device(device_id, name=name, bot_token=bot_token, user_id=user_id)
+    # Restart bot if token changed
+    if bot_token != d.get('bot_token', ''):
+        try:
+            from device_manager import device_manager
+            device_manager.schedule_restart(device_id)
+        except Exception:
+            pass
+    flash(f'Urządzenie "{name}" zaktualizowane.', 'success')
+    return redirect(url_for('devices_page', guild_id=guild_id))
+
+
+@app.route('/guild/<int:guild_id>/devices/<device_id>/delete', methods=['POST'])
+@login_required
+def device_delete(guild_id, device_id):
+    d = db.get_device(device_id)
+    if not d or d['guild_id'] != guild_id:
+        flash('Urządzenie nie znalezione.', 'danger')
+        return redirect(url_for('devices_page', guild_id=guild_id))
+    try:
+        from device_manager import device_manager
+        device_manager.schedule_remove(device_id)
+    except Exception:
+        pass
+    db.delete_device(device_id)
+    flash('Urządzenie usunięte.', 'success')
+    return redirect(url_for('devices_page', guild_id=guild_id))
+
+
+@app.route('/guild/<int:guild_id>/devices/<device_id>/restart', methods=['POST'])
+@login_required
+def device_restart(guild_id, device_id):
+    d = db.get_device(device_id)
+    if not d or d['guild_id'] != guild_id:
+        flash('Urządzenie nie znalezione.', 'danger')
+        return redirect(url_for('devices_page', guild_id=guild_id))
+    try:
+        from device_manager import device_manager
+        device_manager.schedule_restart(device_id)
+        flash(f'Bot "{d["name"]}" restartuje...', 'info')
+    except Exception as e:
+        flash(f'Błąd restartu: {e}', 'danger')
+    return redirect(url_for('devices_page', guild_id=guild_id))
+
+
+@app.route('/api/guild/<int:guild_id>/channels')
+def api_guild_channels(guild_id):
+    """Pobierz konfigurację kanałów PTT — używane przez pi_bridge.
+    Uwierzytelnienie: nagłówek X-API-Secret (dowolne urządzenie gildii) lub sesja dashboardu."""
+    secret = request.headers.get('X-API-Secret', '').strip()
+    if secret:
+        devices = db.get_devices(guild_id)
+        if not any(d.get('api_secret') == secret for d in devices):
+            return jsonify({'error': 'invalid secret'}), 401
+    elif not session.get('logged_in'):
+        return jsonify({'error': 'unauthorized'}), 401
+    return jsonify(db.get_channels(guild_id))
+
+
+@app.route('/api/guild/<int:guild_id>/devices/status')
+@login_required
+def api_devices_status(guild_id):
+    """Real-time device status for JS polling."""
+    devices = db.get_devices(guild_id)
+    try:
+        from device_manager import device_manager
+        result = []
+        for d in devices:
+            bot = device_manager.bots.get(d['device_id'])
+            result.append({
+                'device_id': d['device_id'],
+                'status': d['status'],
+                'bot_running': bool(bot and bot.is_online),
+                'last_heartbeat': d.get('last_heartbeat'),
+            })
+    except Exception:
+        result = [{'device_id': d['device_id'], 'status': d['status'],
+                   'bot_running': False, 'last_heartbeat': d.get('last_heartbeat')}
+                  for d in devices]
+    return jsonify(result)
+
+
+# ─── Device API (called by ESP32, no login required) ─────────────────────────
+
+def _device_auth(req) -> tuple:
+    """Returns (device, error_response) from request JSON."""
+    data = req.get_json(silent=True) or {}
+    device_id = data.get('device_id', '').strip()
+    secret = data.get('secret', '').strip()
+    if not device_id or not secret:
+        return None, (jsonify({'ok': False, 'error': 'missing device_id or secret'}), 400)
+    d = db.get_device(device_id)
+    if not d:
+        return None, (jsonify({'ok': False, 'error': 'unknown device'}), 404)
+    if d.get('api_secret') != secret:
+        return None, (jsonify({'ok': False, 'error': 'invalid secret'}), 401)
+    return d, None
+
+
+@app.route('/api/device/heartbeat', methods=['POST'])
+def api_device_heartbeat():
+    d, err = _device_auth(request)
+    if err:
+        return err
+    try:
+        from device_manager import device_manager
+        device_manager.on_heartbeat(d['device_id'])
+    except Exception:
+        db.update_device_heartbeat(d['device_id'])
+    return jsonify({'ok': True})
+
+
+@app.route('/api/clock', methods=['POST'])
+def api_device_clock():
+    d, err = _device_auth(request)
+    if err:
+        return err
+
+    data = request.get_json(silent=True) or {}
+    action = data.get('action', '').strip()
+    if action not in ('clock_in', 'clock_out'):
+        return jsonify({'ok': False, 'error': 'action must be clock_in or clock_out'}), 400
+
+    user_id = d.get('user_id')
+    guild_id = d.get('guild_id')
+    if not user_id:
+        return jsonify({'ok': False, 'error': 'no user assigned to device'}), 400
+
+    db.ensure_user(user_id, guild_id, '', '')
+
+    if action == 'clock_in':
+        result = db.clock_in(user_id, guild_id)
+        if not result:
+            return jsonify({'ok': False, 'error': 'already clocked in or user not found'}), 409
+        # Send Discord notification via main bot REST API
+        cfg = db.get_guild(guild_id) or {}
+        ch_id = cfg.get('clock_channel_id')
+        if ch_id:
+            _dpost(f'/channels/{ch_id}/messages', {
+                'embeds': [{
+                    'title': '📻 Clock In – Urządzenie',
+                    'description': f'<@{user_id}> zalogował się przez **{d["name"]}**.',
+                    'color': 0x43B581,
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
+                }]
+            })
+        return jsonify({'ok': True, 'action': 'clock_in',
+                        'clock_in_time': result.get('clock_in_time')})
+
+    else:  # clock_out
+        result = db.clock_out(user_id, guild_id)
+        if not result:
+            return jsonify({'ok': False, 'error': 'not clocked in or user not found'}), 409
+        pts = result.get('points_earned', 0)
+        hours = result.get('hours', 0)
+        cfg = db.get_guild(guild_id) or {}
+        ch_id = cfg.get('clock_channel_id')
+        if ch_id:
+            _dpost(f'/channels/{ch_id}/messages', {
+                'embeds': [{
+                    'title': '📻 Clock Out – Urządzenie',
+                    'description': (
+                        f'<@{user_id}> wylogował się przez **{d["name"]}**.\n'
+                        f'Czas: **{round(hours * 60):.0f} min** | '
+                        f'Punkty: **+{pts:.1f} pkt**'
+                    ),
+                    'color': 0xFAA61A,
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
+                }]
+            })
+        return jsonify({'ok': True, 'action': 'clock_out',
+                        'points_earned': pts, 'hours': round(hours, 2)})
+
+
+@app.route('/api/channel/next', methods=['POST'])
+def api_channel_next():
+    """Cycle device to next audio channel. Returns new channel name and order index."""
+    d, err = _device_auth(request)
+    if err:
+        return err
+    device_id = d['device_id']
+    guild_id  = d['guild_id']
+    current   = d.get('current_channel_id')
+    nxt = db.get_next_channel(guild_id, current)
+    if not nxt:
+        return jsonify({'ok': False, 'error': 'no channels configured'}), 404
+    db.update_device(device_id, current_channel_id=nxt['id'])
+    return jsonify({
+        'ok': True,
+        'channel_id':    nxt['id'],
+        'channel_name':  nxt['name'],
+        'channel_order': nxt['order_index'],
+    })
+
+
+# ─── Channels management (dashboard) ─────────────────────────────────────────
+
+@app.route('/guild/<int:guild_id>/channels')
+@login_required
+def channels_page(guild_id):
+    cfg = db.get_guild(guild_id) or {}
+    guild_info = _guild_info(guild_id)
+    channels = db.get_channels(guild_id)
+    devices  = db.get_devices(guild_id)
+    guild_roles = _dget(f'/guilds/{guild_id}/roles') or []
+    discord_channels = _dget(f'/guilds/{guild_id}/channels') or []
+    voice_channels = [c for c in discord_channels if c.get('type') == 2]
+    return render_template('channels.html',
+                           guild_id=guild_id,
+                           guild_name=guild_info.get('name', str(guild_id)),
+                           channels=channels,
+                           devices=devices,
+                           voice_channels=voice_channels,
+                           cfg=cfg)
+
+
+@app.route('/guild/<int:guild_id>/channels/add', methods=['POST'])
+@login_required
+def channel_add(guild_id):
+    name = request.form.get('name', '').strip()
+    if not name:
+        flash('Podaj nazwę kanału.', 'danger')
+        return redirect(url_for('channels_page', guild_id=guild_id))
+    discord_ch_raw = request.form.get('discord_channel_id', '').strip()
+    bot_id         = request.form.get('bot_id', '').strip() or None
+    order_raw      = request.form.get('order_index', '0').strip()
+    is_radio       = 'is_radio_bridge' in request.form
+    discord_ch_id  = int(discord_ch_raw) if discord_ch_raw.isdigit() else None
+    order_index    = int(order_raw) if order_raw.isdigit() else 0
+    ch = db.create_channel(guild_id, name, discord_ch_id, bot_id, order_index, is_radio)
+    if ch:
+        flash(f'Kanał "{name}" dodany.', 'success')
+    else:
+        flash('Błąd podczas dodawania kanału.', 'danger')
+    return redirect(url_for('channels_page', guild_id=guild_id))
+
+
+@app.route('/guild/<int:guild_id>/channels/<int:channel_id>/edit', methods=['POST'])
+@login_required
+def channel_edit(guild_id, channel_id):
+    ch = db.get_channel(channel_id)
+    if not ch or ch['guild_id'] != guild_id:
+        flash('Kanał nie znaleziony.', 'danger')
+        return redirect(url_for('channels_page', guild_id=guild_id))
+    name = request.form.get('name', '').strip()
+    discord_ch_raw = request.form.get('discord_channel_id', '').strip()
+    bot_id         = request.form.get('bot_id', '').strip() or None
+    order_raw      = request.form.get('order_index', '0').strip()
+    is_radio       = 'is_radio_bridge' in request.form
+    discord_ch_id  = int(discord_ch_raw) if discord_ch_raw.isdigit() else None
+    order_index    = int(order_raw) if order_raw.isdigit() else 0
+    db.update_channel(channel_id, name=name, discord_channel_id=discord_ch_id,
+                      bot_id=bot_id, order_index=order_index,
+                      is_radio_bridge=1 if is_radio else 0)
+    flash(f'Kanał "{name}" zaktualizowany.', 'success')
+    return redirect(url_for('channels_page', guild_id=guild_id))
+
+
+@app.route('/guild/<int:guild_id>/channels/<int:channel_id>/delete', methods=['POST'])
+@login_required
+def channel_delete(guild_id, channel_id):
+    ch = db.get_channel(channel_id)
+    if not ch or ch['guild_id'] != guild_id:
+        flash('Kanał nie znaleziony.', 'danger')
+        return redirect(url_for('channels_page', guild_id=guild_id))
+    db.delete_channel(channel_id)
+    flash('Kanał usunięty.', 'success')
+    return redirect(url_for('channels_page', guild_id=guild_id))
+
+
+# ─── WebSocket – PTT audio bridge ─────────────────────────────────────────────
+#
+# Protocol (binary PCM16, mono 16 kHz, little-endian):
+#   Client → Server:  TEXT "START"       device starts transmitting
+#                     BIN  <pcm16 chunk>  audio data
+#                     TEXT "END"         device finished
+#   Server → Client:  TEXT "AUDIO_START" incoming audio from another device
+#                     BIN  <pcm16 chunk>  same format
+#                     TEXT "AUDIO_END"   end of incoming audio
+#
+# Authentication via JSON on first TEXT message:
+#   {"type": "auth", "device_id": "...", "secret": "..."}
+# OR via HTTP headers: X-Device-ID + X-API-Secret (for ESP32 arduinoWebSockets)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# channel_id (int) → set of active WebSocket connections
+_ws_channels: dict[int, set] = {}
+_ws_lock = threading.Lock()
+
+
+def _ws_register(channel_id: int, ws) -> None:
+    with _ws_lock:
+        _ws_channels.setdefault(channel_id, set()).add(ws)
+
+
+def _ws_unregister(channel_id: int, ws) -> None:
+    with _ws_lock:
+        s = _ws_channels.get(channel_id)
+        if s:
+            s.discard(ws)
+            if not s:
+                del _ws_channels[channel_id]
+
+
+def _ws_broadcast_bin(channel_id: int, data: bytes, sender_ws) -> None:
+    """Send binary audio frame to all other connections on same channel."""
+    with _ws_lock:
+        peers = set(_ws_channels.get(channel_id, set()))
+    for peer in peers:
+        if peer is sender_ws:
+            continue
+        try:
+            peer.send(data)
+        except Exception:
+            pass
+
+
+def _ws_broadcast_txt(channel_id: int, msg: str, sender_ws) -> None:
+    with _ws_lock:
+        peers = set(_ws_channels.get(channel_id, set()))
+    for peer in peers:
+        if peer is sender_ws:
+            continue
+        try:
+            peer.send(msg)
+        except Exception:
+            pass
+
+
+@sock.route('/ws/audio')
+def ws_audio(ws):
+    """WebSocket endpoint for PTT audio streaming between ESP32 devices."""
+    # Authenticate via HTTP headers (ESP32 arduinoWebSockets sends these)
+    device_id = request.headers.get('X-Device-ID', '').strip()
+    secret    = request.headers.get('X-API-Secret', '').strip()
+
+    # Fall back to JSON auth message if headers not present
+    device = None
+    channel_id = None
+
+    if device_id and secret:
+        d = db.get_device(device_id)
+        if d and d.get('api_secret') == secret:
+            device = d
+
+    if device is None:
+        # Wait for auth message {"type":"auth","device_id":"...","secret":"..."}
+        try:
+            msg = ws.receive(timeout=10)
+            if isinstance(msg, str):
+                auth = json.loads(msg)
+                if auth.get('type') == 'auth':
+                    device_id = auth.get('device_id', '')
+                    secret    = auth.get('secret', '')
+                    d = db.get_device(device_id)
+                    if d and d.get('api_secret') == secret:
+                        device = d
+        except Exception:
+            pass
+
+    if device is None:
+        ws.send('{"error":"unauthorized"}')
+        ws.close(message=b'Unauthorized')
+        return
+
+    # Resolve current channel
+    channel_id = device.get('current_channel_id')
+    if channel_id is None:
+        # Auto-assign to first channel
+        chs = db.get_channels(device['guild_id'])
+        if chs:
+            channel_id = chs[0]['id']
+            db.update_device(device['device_id'], current_channel_id=channel_id)
+
+    if channel_id is None:
+        ws.send('{"error":"no channels configured"}')
+        ws.close()
+        return
+
+    _ws_register(channel_id, ws)
+    ws.send(json.dumps({'type': 'connected', 'channel_id': channel_id,
+                        'device_id': device['device_id']}))
+
+    try:
+        while True:
+            msg = ws.receive(timeout=60)
+            if msg is None:
+                break
+
+            # Re-check channel in case device switched while connected
+            current = db.get_device(device['device_id'])
+            new_ch = current.get('current_channel_id') if current else channel_id
+            if new_ch and new_ch != channel_id:
+                _ws_unregister(channel_id, ws)
+                channel_id = new_ch
+                _ws_register(channel_id, ws)
+                ws.send(json.dumps({'type': 'channel_changed', 'channel_id': channel_id}))
+                continue
+
+            if isinstance(msg, bytes):
+                # Binary audio frame – broadcast to all peers on same channel
+                _ws_broadcast_bin(channel_id, msg, ws)
+            elif isinstance(msg, str):
+                msg_stripped = msg.strip()
+                if msg_stripped == 'START':
+                    _ws_broadcast_txt(channel_id,
+                                      json.dumps({'type': 'AUDIO_START',
+                                                  'from': device['device_id']}),
+                                      ws)
+                elif msg_stripped == 'END':
+                    _ws_broadcast_txt(channel_id,
+                                      json.dumps({'type': 'AUDIO_END',
+                                                  'from': device['device_id']}),
+                                      ws)
+    except Exception:
+        pass
+    finally:
+        _ws_unregister(channel_id, ws)

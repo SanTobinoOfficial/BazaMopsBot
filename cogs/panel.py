@@ -24,6 +24,12 @@ YELLOW  = 0xFAA61A
 ORANGE  = 0xE67E22
 
 
+def _prog_bar(current: float, next_pts: float, from_pts: float = 0, width: int = 10) -> str:
+    span = next_pts - from_pts
+    filled = int(min(width, max(0, round((current - from_pts) / span * width)))) if span > 0 else width
+    return f'`{"█" * filled}{"░" * (width - filled)}` {current:.0f}/{next_pts:.0f} pkt'
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async def _send_or_edit(channel: discord.TextChannel, guild_id: int,
@@ -247,8 +253,9 @@ class StatsPanelView(ui.View):
         db.ensure_user(uid, gid, str(interaction.user), interaction.user.display_name)
         u = db.get_user(uid, gid)
         rank = db.get_user_auto_rank(uid, gid)
-        ranks = db.get_ranks(gid, auto_only=True)
-        next_r = next((r for r in ranks if r['required_points'] > u['points']), None)
+        next_r = db.get_user_next_rank(uid, gid)
+        warns = db.get_warning_count(uid, gid)
+        cfg = db.get_guild(gid) or {}
         e = discord.Embed(title=f'💰 Punkty – {interaction.user.display_name}', color=BLURPLE)
         e.set_thumbnail(url=interaction.user.display_avatar.url)
         e.add_field(name='Punkty', value=f'**{u["points"]:.1f}** pkt', inline=True)
@@ -259,12 +266,13 @@ class StatsPanelView(ui.View):
                         value=f'{rank["icon"]} **{rank["name"]}** ({rank["required_points"]:.0f} pkt)',
                         inline=False)
         if next_r:
-            left = next_r['required_points'] - u['points']
-            e.add_field(name='Następna ranga',
-                        value=f'{next_r["icon"]} {next_r["name"]} – brakuje **{left:.1f} pkt**',
-                        inline=False)
+            from_pts = rank['required_points'] if rank else 0
+            bar = _prog_bar(u['points'], next_r['required_points'], from_pts)
+            e.add_field(name=f'Postęp → {next_r["icon"]} {next_r["name"]}', value=bar, inline=False)
         else:
             e.add_field(name='✨ Status', value='Osiągnąłeś maksymalną rangę!', inline=False)
+        if warns > 0:
+            e.set_footer(text=f'⚠️ Ostrzeżenia: {warns}/{cfg.get("warn_limit", 3)}')
         await interaction.followup.send(embed=e, ephemeral=True)
 
     @ui.button(label='⭐ Ranga', style=discord.ButtonStyle.primary,
@@ -288,6 +296,11 @@ class StatsPanelView(ui.View):
                           color=color, timestamp=datetime.now())
         e.set_thumbnail(url=interaction.user.display_avatar.url)
         e.add_field(name='💰 Punkty', value=f'{u["points"]:.1f}', inline=True)
+        faction = db.get_user_faction_membership(uid, gid)
+        if faction:
+            e.add_field(name='⚔️ Frakcja',
+                        value=f'{faction["faction_icon"]} **{faction["faction_name"]}**',
+                        inline=True)
         e.add_field(name='🤖 Ranga automatyczna',
                     value=f'{auto["icon"]} **{auto["name"]}**' if auto else '*Brak*',
                     inline=False)
@@ -319,6 +332,8 @@ class StatsPanelView(ui.View):
         warns = db.get_warning_count(uid, gid)
         cfg = db.get_guild(gid) or {}
         streak = u.get('streak_days', 0)
+        faction = db.get_user_faction_membership(uid, gid)
+        jobs = db.get_user_jobs(uid, gid)
         color = BLURPLE
         if auto and auto.get('color'):
             try:
@@ -332,6 +347,13 @@ class StatsPanelView(ui.View):
         e.add_field(name='⏱️ Godziny', value=f'{u["total_hours"]:.1f}h', inline=True)
         e.add_field(name='📅 Sesje', value=str(u['sessions_count']), inline=True)
         e.add_field(name='🔥 Seria', value=f'{streak} {"dzień" if streak == 1 else "dni"}', inline=True)
+        if faction:
+            e.add_field(name='⚔️ Frakcja',
+                        value=f'{faction["faction_icon"]} **{faction["faction_name"]}**',
+                        inline=True)
+        if jobs:
+            job_lines = ' | '.join(f'{j["icon"]} {j["name"]}' for j in jobs)
+            e.add_field(name='💼 Prace', value=job_lines, inline=False)
         rank_lines = []
         if auto:
             rank_lines.append(f'🤖 {auto["icon"]} {auto["name"]}')
@@ -401,11 +423,20 @@ class ActivityPanelView(ui.View):
             mins = int(elapsed.total_seconds() / 60)
             h, m = divmod(mins, 60)
             cfg = db.get_guild(gid) or {}
-            est = round(elapsed.total_seconds() / 3600 * cfg.get('points_per_hour', 10), 1)
+            base_pph = cfg.get('points_per_hour', 10)
+            jobs = db.get_user_jobs(uid, gid)
+            job_bonus_pph = sum(j.get('points_bonus_per_hour') or 0 for j in jobs)
+            effective_pph = base_pph + job_bonus_pph
+            hours_elapsed = elapsed.total_seconds() / 3600
+            est = round(hours_elapsed * effective_pph, 1)
             e = discord.Embed(title='🟢 Zalogowany', color=GREEN)
             e.add_field(name='Od godziny', value=since.strftime('%H:%M'), inline=True)
             e.add_field(name='Czas sesji', value=f'{h}h {m}min' if h else f'{m} min', inline=True)
             e.add_field(name='~Szacowane pkt', value=f'+{est:.1f} pkt', inline=True)
+            if job_bonus_pph > 0:
+                e.add_field(name='Stawka',
+                            value=f'{base_pph:.1f} + {job_bonus_pph:.1f} (praca) = **{effective_pph:.1f} pkt/h**',
+                            inline=False)
         else:
             last_end = db.get_last_session_end(uid, gid)
             e = discord.Embed(title='⚫ Niezalogowany', color=YELLOW)

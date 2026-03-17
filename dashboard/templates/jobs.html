@@ -4,16 +4,28 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h4 class="mb-0"><i class="bi bi-briefcase me-2"></i>Prace – {{ guild_name }}</h4>
-  <button class="btn btn-sm btn-discord" data-bs-toggle="modal" data-bs-target="#createModal">
-    <i class="bi bi-plus-lg me-1"></i>Nowa praca
-  </button>
+  <div class="d-flex gap-2">
+    {% if jobs %}
+    <form method="POST" action="{{ url_for('balance_jobs', guild_id=guild_id) }}"
+          onsubmit="return confirm('Automatycznie ustawić zbalansowane bonusy pkt/h dla wszystkich prac?\n\nFormuła: sqrt(wymagane_pkt / max_pkt) × stawka_bazowa\nMaksymalny bonus = stawka bazowa serwera.')">
+      <button type="submit" class="btn btn-sm btn-outline-warning">
+        <i class="bi bi-lightning-charge me-1"></i>Zbalansuj zarobki
+      </button>
+    </form>
+    {% endif %}
+    <button class="btn btn-sm btn-discord" data-bs-toggle="modal" data-bs-target="#createModal">
+      <i class="bi bi-plus-lg me-1"></i>Nowa praca
+    </button>
+  </div>
 </div>
 
 <div class="alert alert-secondary small mb-3">
   <i class="bi bi-info-circle me-1"></i>
   Cywile (bez frakcji) mogą samodzielnie wybierać prace na kanale z panelem.
   Admini mogą nadawać prace komukolwiek przez <code>.givejob @user &lt;praca&gt;</code>.
-  Panel: <code>.setjobchannel #kanał</code> → <code>.jobpanel</code>
+  Panel: <code>.setjobchannel #kanał</code> → <code>.jobpanel</code><br>
+  <i class="bi bi-coin me-1 text-warning"></i>
+  <strong class="text-white">Bonus pkt/h</strong> – każda praca może dawać dodatkowe punkty za godzinę clock-in na wierzchu podstawowej stawki serwera.
 </div>
 
 {% if not jobs %}
@@ -34,7 +46,7 @@
           <h5 class="mb-0">{{ j.icon }} {{ j.name }}</h5>
           <div class="d-flex gap-1">
             <button class="btn btn-sm btn-outline-secondary"
-                    onclick="openEditJob({{ j.id }}, '{{ j.name|e }}', {{ j.required_points }}, '{{ j.icon|e }}', '{{ j_color }}', '{{ j.description|e }}', {{ j.role_id or 'null' }})">
+                    onclick="openEditJob({{ j.id }}, '{{ j.name|e }}', {{ j.required_points }}, '{{ j.icon|e }}', '{{ j_color }}', '{{ j.description|e }}', {{ j.role_id or 'null' }}, {{ j.points_bonus_per_hour or 0 }})">
               <i class="bi bi-pencil"></i>
             </button>
             <form method="POST"
@@ -51,8 +63,13 @@
         <p class="text-muted small mb-2">{{ j.description }}</p>
         {% endif %}
 
-        <div class="d-flex gap-3 small mb-2">
-          <span><i class="bi bi-star me-1"></i><strong>{{ j.required_points | int }} pkt</strong></span>
+        <div class="d-flex gap-3 small mb-2 flex-wrap">
+          <span><i class="bi bi-star me-1"></i><strong>{{ j.required_points | int }} pkt</strong> wymagane</span>
+          {% if j.points_bonus_per_hour %}
+          <span class="text-warning fw-semibold">
+            <i class="bi bi-coin me-1"></i>+{{ j.points_bonus_per_hour | round(1) }} pkt/h
+          </span>
+          {% endif %}
           {% if j.role_id %}
           <span class="text-muted"><i class="bi bi-person-badge me-1"></i>Rola: {{ j.role_id }}</span>
           {% endif %}
@@ -111,6 +128,18 @@
             <input type="color" name="color" class="form-control form-control-color" value="#7289da">
           </div>
           <div class="col-12">
+            <label class="form-label">
+              <i class="bi bi-coin text-warning me-1"></i>Bonus pkt/h (clock-in)
+            </label>
+            <div class="input-group">
+              <span class="input-group-text">+</span>
+              <input type="number" name="points_bonus_per_hour" class="form-control"
+                     value="0" min="0" step="0.5" placeholder="0">
+              <span class="input-group-text">pkt/h</span>
+            </div>
+            <div class="form-text">Dodatkowe punkty na godzinę clock-in ponad podstawową stawkę serwera.</div>
+          </div>
+          <div class="col-12">
             <label class="form-label">Rola Discord (opcjonalna)</label>
             <select name="role_id" class="form-select">
               <option value="">— brak roli —</option>
@@ -160,6 +189,17 @@
             <input type="color" id="editColor" name="color" class="form-control form-control-color">
           </div>
           <div class="col-12">
+            <label class="form-label">
+              <i class="bi bi-coin text-warning me-1"></i>Bonus pkt/h (clock-in)
+            </label>
+            <div class="input-group">
+              <span class="input-group-text">+</span>
+              <input type="number" id="editBonus" name="points_bonus_per_hour"
+                     class="form-control" min="0" step="0.5">
+              <span class="input-group-text">pkt/h</span>
+            </div>
+          </div>
+          <div class="col-12">
             <label class="form-label">Rola Discord</label>
             <select id="editRole" name="role_id" class="form-select">
               <option value="">— brak roli —</option>
@@ -183,7 +223,7 @@
 </div>
 
 <script>
-function openEditJob(id, name, points, icon, color, desc, roleId) {
+function openEditJob(id, name, points, icon, color, desc, roleId, bonus) {
   document.getElementById('editForm').action =
     '/guild/{{ guild_id }}/jobs/' + id + '/edit';
   document.getElementById('editName').value   = name;
@@ -191,6 +231,7 @@ function openEditJob(id, name, points, icon, color, desc, roleId) {
   document.getElementById('editIcon').value   = icon;
   document.getElementById('editColor').value  = color;
   document.getElementById('editDesc').value   = desc;
+  document.getElementById('editBonus').value  = bonus || 0;
   const roleSelect = document.getElementById('editRole');
   for (let opt of roleSelect.options) {
     opt.selected = roleId && opt.value == String(roleId);

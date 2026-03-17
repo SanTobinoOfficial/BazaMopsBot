@@ -1,0 +1,206 @@
+{% extends 'base.html' %}
+{% block title %}Import Backupu{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-2 mb-4">
+  <a href="{{ url_for('config_page', guild_id=guild_id) }}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left"></i>
+  </a>
+  <h4 class="fw-bold mb-0"><i class="bi bi-upload me-2 text-info"></i>Import Backupu</h4>
+</div>
+
+{# ── Import results (shown after redirect from import_run) ─────────────────── #}
+{% if import_results %}
+<div class="card p-3 mb-4" style="border-color:rgba(114,137,218,.3)">
+  <div class="d-flex align-items-center justify-content-between mb-2">
+    <div class="section-title mb-0"><i class="bi bi-list-check me-1"></i>Wyniki importu</div>
+    <span class="badge bg-secondary">{{ import_results | length }} operacji</span>
+  </div>
+  <div style="max-height:260px;overflow-y:auto;font-size:.8rem;font-family:monospace">
+    {% for line in import_results %}
+    <div class="py-0 {% if line.startswith('✅') %}text-success{% elif line.startswith('⏭') %}text-muted{% else %}text-danger{% endif %}">
+      {{ line }}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if not preview %}
+{# ── Step 1: upload form ───────────────────────────────────────────────────── #}
+<div class="row justify-content-center">
+  <div class="col-lg-6">
+    <div class="card p-4">
+      <div class="section-title"><i class="bi bi-file-earmark-arrow-up me-1"></i>Wybierz plik backupu</div>
+      <p class="text-muted small mb-3">
+        Obsługiwany format: <code>.json</code> wygenerowany przez przycisk
+        <strong class="text-white">Backup</strong> w dashboardzie (wersja 1.x i 2.0).
+      </p>
+      <div class="alert alert-warning py-2 small mb-3">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        <strong>Tryb Merge</strong> – bezpieczny: nie nadpisuje istniejących danych.<br>
+        <strong>Tryb Overwrite</strong> – nadpisuje punkty, rangi i konfigurację istniejącymi wartościami z backupu.
+      </div>
+
+      <form method="POST" enctype="multipart/form-data">
+        <div class="mb-3">
+          <label class="form-label text-muted small">Plik .json</label>
+          <input type="file" name="backup_file" accept=".json"
+                 class="form-control bg-dark border-secondary text-white" required>
+        </div>
+        <button type="submit" class="btn btn-info text-dark fw-semibold w-100">
+          <i class="bi bi-search me-1"></i>Analizuj plik → Podgląd
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% else %}
+{# ── Step 2: preview + import options ─────────────────────────────────────── #}
+
+{# Summary cards #}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card p-3 text-center stat-card">
+      <div class="section-title">Wersja backupu</div>
+      <div class="fw-bold text-white">{{ preview.version }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 text-center stat-card green">
+      <div class="section-title">Eksportowano</div>
+      <div class="fw-bold text-white small">{{ preview.exported_at[:16] | replace('T',' ') }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 text-center stat-card yellow">
+      <div class="section-title">Serwer źródłowy</div>
+      <div class="fw-bold text-white small" style="font-size:.75rem">{{ preview.source_guild }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 text-center stat-card {% if preview.has_config %}green{% else %}red{% endif %}">
+      <div class="section-title">Konfiguracja</div>
+      <div class="fw-bold {% if preview.has_config %}text-success{% else %}text-danger{% endif %}">
+        {% if preview.has_config %}✅ Tak{% else %}❌ Brak{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Content counts #}
+<div class="card p-3 mb-4">
+  <div class="section-title"><i class="bi bi-database me-1"></i>Zawartość backupu</div>
+  <div class="row g-2">
+    {% set items = [
+      ('bi-people',           'Użytkownicy',        preview.users),
+      ('bi-star',             'Rangi',               preview.ranks),
+      ('bi-shield-shaded',    'Frakcje',             preview.factions),
+      ('bi-briefcase',        'Prace',               preview.jobs),
+      ('bi-person-badge',     'Rangi specjalne',     preview.user_special_ranks),
+      ('bi-shield-check',     'Przypisania frakcji', preview.faction_members),
+      ('bi-briefcase-fill',   'Przypisania prac',    preview.user_jobs),
+      ('bi-clock-history',    'Sesje clock-in',      preview.clock_sessions),
+      ('bi-currency-exchange','Transakcje pkt.',     preview.point_transactions),
+      ('bi-exclamation-triangle', 'Ostrzeżenia',     preview.warnings),
+    ] %}
+    {% for icon, label, count in items %}
+    <div class="col-6 col-md-4 col-lg-3">
+      <div class="d-flex align-items-center gap-2 p-2 rounded" style="background:rgba(255,255,255,.04)">
+        <i class="bi {{ icon }} text-muted"></i>
+        <div>
+          <div class="text-muted" style="font-size:.7rem">{{ label }}</div>
+          <div class="fw-bold text-white">{{ count }}</div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+{# Import form #}
+<div class="card p-4">
+  <div class="section-title"><i class="bi bi-sliders me-1"></i>Opcje importu</div>
+
+  <form method="POST" action="{{ url_for('import_run', guild_id=guild_id) }}"
+        onsubmit="return confirm('Uruchomić import z wybranymi opcjami?')">
+
+    {# Mode #}
+    <div class="mb-4">
+      <div class="text-muted small mb-2 fw-semibold">Tryb importu</div>
+      <div class="d-flex gap-3 flex-wrap">
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="mode" id="mode_merge" value="merge" checked>
+          <label class="form-check-label text-white" for="mode_merge">
+            <i class="bi bi-plus-circle text-success me-1"></i><strong>Merge</strong>
+            <small class="text-muted d-block" style="font-size:.75rem">
+              Dodaje brakujące rekordy. Nie nadpisuje istniejących.
+            </small>
+          </label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="mode" id="mode_overwrite" value="overwrite">
+          <label class="form-check-label text-white" for="mode_overwrite">
+            <i class="bi bi-arrow-repeat text-warning me-1"></i><strong>Overwrite</strong>
+            <small class="text-muted d-block" style="font-size:.75rem">
+              Aktualizuje istniejące rekordy wartościami z backupu.
+            </small>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    {# Checkboxes #}
+    <div class="mb-4">
+      <div class="text-muted small mb-2 fw-semibold">Co importować</div>
+      <div class="row g-2">
+        {% set checks = [
+          ('do_config',   'bi-gear',           'Konfiguracja gilda',    preview.has_config,          'Kanały, punkty/h, role admina'),
+          ('do_factions', 'bi-shield-shaded',  'Frakcje',               preview.factions > 0,        preview.factions|string + ' rekordów'),
+          ('do_ranks',    'bi-star',           'Rangi',                  preview.ranks > 0,           preview.ranks|string + ' rekordów'),
+          ('do_jobs',     'bi-briefcase',      'Prace',                  preview.jobs > 0,            preview.jobs|string + ' rekordów'),
+          ('do_users',    'bi-people',         'Użytkownicy',            preview.users > 0,           preview.users|string + ' rekordów'),
+          ('do_assign',   'bi-person-badge',   'Przypisania (rangi/frakcje/prace)', (preview.user_special_ranks + preview.faction_members + preview.user_jobs) > 0,
+                          (preview.user_special_ranks + preview.faction_members + preview.user_jobs)|string + ' rekordów'),
+          ('do_sessions', 'bi-clock-history',  'Sesje + transakcje',     (preview.clock_sessions + preview.point_transactions) > 0,
+                          (preview.clock_sessions + preview.point_transactions)|string + ' rekordów'),
+          ('do_warnings', 'bi-exclamation-triangle', 'Ostrzeżenia',      preview.warnings > 0,        preview.warnings|string + ' rekordów'),
+        ] %}
+        {% for name, icon, label, has_data, note in checks %}
+        <div class="col-12 col-md-6">
+          <div class="form-check p-3 rounded {% if not has_data %}opacity-50{% endif %}"
+               style="background:rgba(255,255,255,.04);border:1px solid #40444b">
+            <input class="form-check-input" type="checkbox" name="{{ name }}" id="{{ name }}"
+                   {% if has_data %}checked{% endif %} {% if not has_data %}disabled{% endif %}>
+            <label class="form-check-label text-white w-100" for="{{ name }}">
+              <i class="bi {{ icon }} me-1 text-muted"></i>{{ label }}
+              <small class="text-muted d-block" style="font-size:.72rem">{{ note }}</small>
+            </label>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="d-flex gap-2">
+      <button type="submit" class="btn btn-info text-dark fw-bold px-4">
+        <i class="bi bi-play-fill me-1"></i>Uruchom Import
+      </button>
+      <a href="{{ url_for('import_page', guild_id=guild_id) }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-counterclockwise me-1"></i>Zmień plik
+      </a>
+    </div>
+  </form>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+/* Display import results stored in session (one-time flash) */
+window.addEventListener('DOMContentLoaded', function () {
+  // Session-stored results are rendered server-side above
+});
+</script>
+{% endblock %}

@@ -4,7 +4,11 @@ from discord import ui
 from datetime import datetime, date
 import json
 import asyncio
+import hashlib
+import os
 import database as db
+
+_REGULAMIN_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'REGULAMIN.md')
 
 # ─── Session embed helpers ────────────────────────────────────────────────────
 
@@ -516,11 +520,14 @@ class ClockView(ui.View):
             await interaction.followup.send('❌ Błąd przy wylogowaniu.', ephemeral=True)
             return
 
-        h    = result['hours']
-        m    = result['minutes']
-        pts  = result['points_earned']
-        ci   = result['clock_in_time']
-        co   = result['clock_out_time']
+        h              = result['hours']
+        m              = result['minutes']
+        pts            = result['points_earned']
+        ci             = result['clock_in_time']
+        co             = result['clock_out_time']
+        job_bonus_pph  = result.get('job_bonus_pph', 0.0)
+        base_pts       = result.get('base_pts', pts)
+        effective_pph  = result.get('effective_pph', 0.0)
         time_str = f'{int(h)}h {int(m % 60)}min' if h >= 1 else f'{int(m)}min'
 
         # ── Streak update + bonus ──────────────────────────────────────────
@@ -545,8 +552,15 @@ class ClockView(ui.View):
         e.set_thumbnail(url=interaction.user.display_avatar.url)
         e.add_field(name='👤 Użytkownik', value=interaction.user.display_name, inline=True)
         e.add_field(name='⏱️ Czas', value=time_str, inline=True)
-        pts_text = (f'+**{pts:.1f}** pkt{streak_bonus_msg}'
-                    if pts > 0 else '*(zbyt krótka sesja)*')
+        if pts > 0:
+            if job_bonus_pph > 0:
+                job_pts = round(pts - base_pts, 2)
+                pts_text = (f'+**{pts:.1f}** pkt{streak_bonus_msg}\n'
+                            f'*(baza: {base_pts:.1f} + praca: {job_pts:.1f})*')
+            else:
+                pts_text = f'+**{pts:.1f}** pkt{streak_bonus_msg}'
+        else:
+            pts_text = '*(zbyt krótka sesja)*'
         e.add_field(name='💰 Punkty', value=pts_text, inline=True)
         e.add_field(name='🕐 Clock In', value=ci.strftime('%H:%M'), inline=True)
         e.add_field(name='🕑 Clock Out', value=co.strftime('%H:%M'), inline=True)
@@ -702,11 +716,13 @@ class ClockInCog(commands.Cog):
         self.schedule_task.start()
         self.anti_cheat_task.start()
         self.scheduled_announcements_task.start()
+        self.regulamin_watch_task.start()
 
     def cog_unload(self):
         self.schedule_task.cancel()
         self.anti_cheat_task.cancel()
         self.scheduled_announcements_task.cancel()
+        self.regulamin_watch_task.cancel()
 
     # ── Per-day embed schedule (runs every minute) ─────────────────────────
 
@@ -796,6 +812,73 @@ class ClockInCog(commands.Cog):
     @scheduled_announcements_task.before_loop
     async def before_announcements(self):
         await self.bot.wait_until_ready()
+
+    # ── Regulamin file watcher (runs every 5 min) ──────────────────────────
+
+    @tasks.loop(minutes=5)
+    async def regulamin_watch_task(self):
+        """Re-publish REGULAMIN.md to all configured channels when the file changes."""
+        try:
+            if not os.path.exists(_REGULAMIN_PATH):
+                return
+            with open(_REGULAMIN_PATH, encoding='utf-8') as f:
+                content = f.read()
+            file_hash = hashlib.md5(content.encode()).hexdigest()
+
+            for guild_cfg in db.get_all_guilds():
+                ch_id = guild_cfg.get('regulamin_channel_id')
+                if not ch_id:
+                    continue
+                if guild_cfg.get('regulamin_file_hash') == file_hash:
+                    continue   # No change
+
+                # Re-publish
+                channel = self.bot.get_channel(ch_id)
+                if not channel:
+                    continue
+                try:
+                    old_ids = json.loads(guild_cfg.get('regulamin_message_ids') or '[]')
+                except Exception:
+                    old_ids = []
+                for msg_id in old_ids:
+                    try:
+                        old_msg = await channel.fetch_message(msg_id)
+                        await old_msg.delete()
+                    except Exception:
+                        pass
+
+                # Split and send
+                lines = content.split('\n')
+                chunks, current, cur_len = [], [], 0
+                for line in lines:
+                    line_len = len(line) + 1
+                    if cur_len + line_len > 1900 and current:
+                        chunks.append('\n'.join(current))
+                        current, cur_len = [line], line_len
+                    else:
+                        current.append(line)
+                        cur_len += line_len
+                if current:
+                    chunks.append('\n'.join(current))
+
+                new_ids = []
+                for chunk in [c for c in chunks if c.strip()]:
+                    try:
+                        msg = await channel.send(chunk)
+                        new_ids.append(str(msg.id))
+                    except Exception:
+                        pass
+
+                db.update_guild(guild_cfg['guild_id'],
+                                regulamin_message_ids=json.dumps(new_ids),
+                                regulamin_file_hash=file_hash)
+        except Exception as e:
+            print(f'[regulamin watcher] Błąd: {e}')
+
+    @regulamin_watch_task.before_loop
+    async def before_regulamin_watch(self):
+        await self.bot.wait_until_ready()
+        await asyncio.sleep(30)   # short delay on startup
 
     # ── Anti-cheat (runs every 30 min) ────────────────────────────────────
 

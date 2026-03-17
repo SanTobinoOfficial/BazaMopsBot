@@ -36,6 +36,19 @@
         </select>
         <small class="text-muted">Bot loguje tutaj akcje clock in/out i zmiany rang.</small>
       </div>
+
+      <div class="mb-0">
+        <label class="form-label text-muted small">📜 Kanał Regulaminu</label>
+        <select name="regulamin_channel_id" class="form-select bg-dark border-secondary text-white">
+          <option value="">— Nie ustawiony —</option>
+          {% for ch in text_channels %}
+          <option value="{{ ch.id }}" {% if cfg.regulamin_channel_id == ch.id %}selected{% endif %}>
+            #{{ ch.name }}
+          </option>
+          {% endfor %}
+        </select>
+        <small class="text-muted">Bot automatycznie aktualizuje regulamin gdy plik REGULAMIN.md się zmieni.</small>
+      </div>
     </div>
   </div>
 
@@ -64,6 +77,19 @@
           <span class="input-group-text bg-dark border-secondary text-muted">min</span>
         </div>
         <small class="text-muted">Sesje krótsze niż ta wartość nie dają punktów.</small>
+      </div>
+
+      <div class="mb-0">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" name="auto_balance_jobs"
+                 id="auto_balance_jobs" value="1"
+                 {% if cfg.auto_balance_jobs %}checked{% endif %}>
+          <label class="form-check-label text-muted small" for="auto_balance_jobs">
+            <i class="bi bi-lightning text-warning me-1"></i>
+            <strong class="text-white">Auto-balansuj bonusy prac</strong> przy zmianie pkt/h
+          </label>
+        </div>
+        <small class="text-muted d-block mt-1">Przy zapisie konfiguracji automatycznie przelicza bonusy pkt/h dla wszystkich prac proporcjonalnie do nowej stawki bazowej.</small>
       </div>
     </div>
   </div>
@@ -249,6 +275,43 @@
 </div>
 </form>
 
+{# ── Regulamin card ── #}
+<div class="card p-4 mt-4" style="border-color: rgba(114,137,218,.4)">
+  <div class="row align-items-center g-3">
+    <div class="col-auto">
+      <span style="font-size:2.5rem">📜</span>
+    </div>
+    <div class="col">
+      <h5 class="fw-bold text-white mb-1">Regulamin serwera</h5>
+      <p class="text-muted small mb-0">
+        Opublikuj lub zaktualizuj regulamin na wybranym kanale Discord.
+        Bot automatycznie wykryje zmiany w pliku <code>REGULAMIN.md</code> i zaktualizuje wiadomości co 5 minut.
+        {% if cfg.regulamin_channel_id %}
+        <br><span class="text-success"><i class="bi bi-check-circle me-1"></i>Kanał ustawiony:
+          {% set reg_ch = namespace(name='ID ' ~ cfg.regulamin_channel_id) %}
+          {% for ch in text_channels %}{% if ch.id | int == cfg.regulamin_channel_id %}{% set reg_ch.name = ch.name %}{% endif %}{% endfor %}
+          <code>#{{ reg_ch.name }}</code></span>
+        {% if regulamin_msg_count > 0 %}
+        <span class="text-muted ms-2">· opublikowano {{ regulamin_msg_count }} wiadomości</span>
+        {% endif %}
+        {% else %}
+        <br><span class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>Ustaw kanał regulaminu w sekcji Kanały powyżej i zapisz konfigurację.</span>
+        {% endif %}
+      </p>
+    </div>
+    {% if cfg.regulamin_channel_id %}
+    <div class="col-auto">
+      <form method="POST" action="{{ url_for('publish_regulamin', guild_id=guild_id) }}"
+            onsubmit="return confirm('Opublikować/zaktualizować regulamin na kanale Discord?\nStare wiadomości zostaną usunięte i wysłane ponownie.')">
+        <button type="submit" class="btn btn-discord fw-semibold px-4">
+          <i class="bi bi-send me-1"></i>Opublikuj / Zaktualizuj
+        </button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
 {# ── MOPS Auto-Setup card ── #}
 <div class="card p-4 mt-4" style="border-color: var(--discord-yellow)">
   <div class="row align-items-center g-3">
@@ -277,6 +340,33 @@
       Sierżant / Szeregowy / Drugi Szeregowy, prace cywilne (Farmer, Kowal, Kupiec, Rajca),
       kanały głosowe Radio Alpha-1 / Nu-7 / Ogólne i Gabinet Króla.
     </small>
+  </div>
+</div>
+
+{# ── Backup & Import card ── #}
+<div class="card p-4 mt-4" style="border-color: #17a2b8">
+  <div class="row align-items-center g-3">
+    <div class="col-auto">
+      <span style="font-size:2.5rem">💾</span>
+    </div>
+    <div class="col">
+      <h5 class="fw-bold text-info mb-1">Backup &amp; Import</h5>
+      <p class="text-muted small mb-0">
+        Pełny backup zawiera <strong class="text-white">wszystkie tabele</strong>:
+        użytkowników, rangi, frakcje, prace, sesje, transakcje, konfigurację i ostrzeżenia.
+        Import obsługuje tryb <em>Merge</em> (bezpieczny) i <em>Overwrite</em> (nadpisz).
+      </p>
+    </div>
+    <div class="col-auto d-flex gap-2 flex-wrap">
+      <a href="{{ url_for('backup_guild', guild_id=guild_id) }}"
+         class="btn btn-outline-info fw-semibold px-3">
+        <i class="bi bi-download me-1"></i>Pobierz Backup
+      </a>
+      <a href="{{ url_for('import_page', guild_id=guild_id) }}"
+         class="btn btn-info text-dark fw-bold px-3">
+        <i class="bi bi-upload me-1"></i>Importuj Backup
+      </a>
+    </div>
   </div>
 </div>
 

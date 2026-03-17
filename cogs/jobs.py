@@ -61,129 +61,117 @@ async def _refresh_job_panel(guild: discord.Guild) -> None:
         pass
 
 
-# ─── Ephemeral Select views ───────────────────────────────────────────────────
+# ─── Ephemeral per-job button views ───────────────────────────────────────────
 
-class JobAddSelect(ui.Select):
-    def __init__(self, available_jobs: list):
-        options = [
-            discord.SelectOption(
-                label=j['name'][:100],
-                value=str(j['id']),
-                description=f'{j["required_points"]:.0f} pkt' + (f' – {j["description"][:50]}' if j.get('description') else ''),
-                emoji=j.get('icon', '💼')
-            )
-            for j in available_jobs
-        ]
+class JobSelectButton(ui.Button):
+    """Single button that immediately assigns one job + Discord role."""
+    def __init__(self, job: dict):
+        label = f'{job["name"]} – {job["required_points"]:.0f} pkt'
+        if len(label) > 80:
+            label = label[:77] + '...'
         super().__init__(
-            placeholder='Wybierz pracę/prace do dodania…',
-            min_values=1,
-            max_values=len(options),
-            options=options
+            label=label,
+            style=discord.ButtonStyle.success,
+            custom_id=f'job_pick_{job["id"]}',
+            emoji=job.get('icon') or '💼',
         )
+        self.job_id = job['id']
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         gid, uid = interaction.guild_id, interaction.user.id
         db.ensure_user(uid, gid, str(interaction.user), interaction.user.display_name)
-
-        added = []
-        for job_id_str in self.values:
-            job_id = int(job_id_str)
-            job = db.get_job_by_id(job_id)
-            if not job:
-                continue
-            ok = db.select_job(uid, gid, job_id)
-            if ok:
-                added.append(job)
-                # Assign Discord role if configured
-                if job.get('role_id'):
-                    role = interaction.guild.get_role(job['role_id'])
-                    member = interaction.guild.get_member(uid)
-                    if role and member:
-                        try:
-                            await member.add_roles(role, reason=f'Praca: {job["name"]}')
-                        except discord.Forbidden:
-                            pass
-
-        if added:
-            names = ', '.join(f'{j["icon"]} {j["name"]}' for j in added)
+        job = db.get_job_by_id(self.job_id)
+        if not job:
+            await interaction.followup.send(
+                embed=discord.Embed(description='❌ Praca nie istnieje.', color=RED),
+                ephemeral=True)
+            return
+        ok = db.select_job(uid, gid, self.job_id)
+        if ok:
+            if job.get('role_id'):
+                role = interaction.guild.get_role(job['role_id'])
+                member = interaction.guild.get_member(uid)
+                if role and member:
+                    try:
+                        await member.add_roles(role, reason=f'Praca: {job["name"]}')
+                    except discord.Forbidden:
+                        pass
             await interaction.followup.send(
                 embed=discord.Embed(
-                    description=f'✅ Dodano prace: **{names}**',
+                    description=f'✅ Otrzymałeś pracę **{job["icon"]} {job["name"]}**!',
                     color=GREEN),
                 ephemeral=True)
             await _refresh_job_panel(interaction.guild)
         else:
             await interaction.followup.send(
-                embed=discord.Embed(description='⚠️ Nie udało się dodać prac.', color=YELLOW),
+                embed=discord.Embed(
+                    description=f'⚠️ Już masz pracę **{job["name"]}**.', color=YELLOW),
                 ephemeral=True)
 
 
-class JobRemoveSelect(ui.Select):
-    def __init__(self, current_jobs: list):
-        options = [
-            discord.SelectOption(
-                label=j['name'][:100],
-                value=str(j['id']),
-                description=f'{j["required_points"]:.0f} pkt' + (' (admin)' if j.get('admin_granted') else ''),
-                emoji=j.get('icon', '💼')
-            )
-            for j in current_jobs
-        ]
+class JobDeselectButton(ui.Button):
+    """Single button that immediately removes one job + Discord role."""
+    def __init__(self, job: dict):
+        label = job['name']
+        if j_granted := job.get('admin_granted'):
+            label += ' (admin)'
+        if len(label) > 80:
+            label = label[:77] + '...'
         super().__init__(
-            placeholder='Wybierz pracę/prace do rezygnacji…',
-            min_values=1,
-            max_values=len(options),
-            options=options
+            label=label,
+            style=discord.ButtonStyle.danger,
+            custom_id=f'job_drop_{job["id"]}',
+            emoji=job.get('icon') or '💼',
         )
+        self.job_id = job['id']
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         gid, uid = interaction.guild_id, interaction.user.id
-
-        removed = []
-        for job_id_str in self.values:
-            job_id = int(job_id_str)
-            job = db.get_job_by_id(job_id)
-            if not job:
-                continue
-            ok = db.deselect_job(uid, gid, job_id)
-            if ok:
-                removed.append(job)
-                # Remove Discord role if configured
-                if job.get('role_id'):
-                    role = interaction.guild.get_role(job['role_id'])
-                    member = interaction.guild.get_member(uid)
-                    if role and member:
-                        try:
-                            await member.remove_roles(role, reason=f'Rezygnacja z pracy: {job["name"]}')
-                        except discord.Forbidden:
-                            pass
-
-        if removed:
-            names = ', '.join(f'{j["icon"]} {j["name"]}' for j in removed)
+        job = db.get_job_by_id(self.job_id)
+        if not job:
+            await interaction.followup.send(
+                embed=discord.Embed(description='❌ Praca nie istnieje.', color=RED),
+                ephemeral=True)
+            return
+        ok = db.deselect_job(uid, gid, self.job_id)
+        if ok:
+            if job.get('role_id'):
+                role = interaction.guild.get_role(job['role_id'])
+                member = interaction.guild.get_member(uid)
+                if role and member:
+                    try:
+                        await member.remove_roles(role, reason=f'Rezygnacja z pracy: {job["name"]}')
+                    except discord.Forbidden:
+                        pass
             await interaction.followup.send(
                 embed=discord.Embed(
-                    description=f'✅ Zrezygnowano z: **{names}**',
+                    description=f'✅ Zrezygnowano z pracy **{job["icon"]} {job["name"]}**.',
                     color=ORANGE),
                 ephemeral=True)
             await _refresh_job_panel(interaction.guild)
         else:
             await interaction.followup.send(
-                embed=discord.Embed(description='⚠️ Nie udało się usunąć prac.', color=YELLOW),
+                embed=discord.Embed(
+                    description=f'⚠️ Nie masz pracy **{job["name"]}**.', color=YELLOW),
                 ephemeral=True)
 
 
-class JobAddView(ui.View):
+class JobButtonView(ui.View):
+    """Ephemeral view: one button per available job (max 25)."""
     def __init__(self, available_jobs: list):
         super().__init__(timeout=60)
-        self.add_item(JobAddSelect(available_jobs))
+        for job in available_jobs[:25]:
+            self.add_item(JobSelectButton(job))
 
 
-class JobRemoveView(ui.View):
+class JobDelistView(ui.View):
+    """Ephemeral view: one button per current job for deselection (max 25)."""
     def __init__(self, current_jobs: list):
         super().__init__(timeout=60)
-        self.add_item(JobRemoveSelect(current_jobs))
+        for job in current_jobs[:25]:
+            self.add_item(JobDeselectButton(job))
 
 
 # ─── Persistent panel view ────────────────────────────────────────────────────
@@ -238,11 +226,11 @@ class JobPanelView(ui.View):
                 ephemeral=True)
             return
 
-        view = JobAddView(available)
+        view = JobButtonView(available)
         await interaction.followup.send(
             embed=discord.Embed(
                 title='💼 Wybierz pracę',
-                description=f'Dostępnych prac: **{len(available)}** (spełniasz próg punktowy)',
+                description='Kliknij przycisk, aby od razu otrzymać pracę i rolę:',
                 color=BLURPLE),
             view=view,
             ephemeral=True)
@@ -261,11 +249,11 @@ class JobPanelView(ui.View):
                 ephemeral=True)
             return
 
-        view = JobRemoveView(current)
+        view = JobDelistView(current)
         await interaction.followup.send(
             embed=discord.Embed(
                 title='🚪 Zrezygnuj z pracy',
-                description=f'Twoje prace: **{len(current)}**',
+                description='Kliknij przycisk, aby zrezygnować z pracy i stracić rolę:',
                 color=ORANGE),
             view=view,
             ephemeral=True)
