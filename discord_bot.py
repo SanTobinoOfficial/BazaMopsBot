@@ -16,6 +16,7 @@ class BotMops(commands.Bot):
         await self.load_extension('cogs.clockin')
         await self.load_extension('cogs.admin')
         await self.load_extension('cogs.user')
+        await self.load_extension('cogs.economy')
         await self.load_extension('cogs.panel')
         await self.load_extension('cogs.jobs')
         # Re-register ALL persistent views after restart

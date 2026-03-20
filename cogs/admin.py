@@ -1,9 +1,20 @@
 import discord
 from discord.ext import commands
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
+import re
 import database as db
 from cogs.clockin import send_log, log_embed
+
+
+def _parse_duration(s: str) -> timedelta | None:
+    """Parse '1h', '30m', '2d', '1h30m' etc. Returns timedelta or None."""
+    pattern = r'(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?'
+    m = re.fullmatch(pattern, s.strip().lower())
+    if not m or not any(m.groups()):
+        return None
+    d, h, mi, sec = (int(x) if x else 0 for x in m.groups())
+    return timedelta(days=d, hours=h, minutes=mi, seconds=sec)
 
 BLURPLE = 0x7289DA
 GREEN   = 0x43B581
@@ -29,10 +40,27 @@ class AdminCog(commands.Cog):
             # Leaderboard
             'ban':             self._cmd_ban,
             'unban':           self._cmd_unban,
-            # Warnings
+            # Warnings & moderation
             'warn':            self._cmd_warn,
             'warnings':        self._cmd_warnings,
             'clearwarn':       self._cmd_clearwarn,
+            'warnpoints':      self._cmd_warnpoints,
+            'clearwarnpoints': self._cmd_clearwarnpoints,
+            'warnlb':          self._cmd_warnlb,
+            'mute':            self._cmd_mute,
+            'unmute':          self._cmd_unmute,
+            'kick':            self._cmd_kick,
+            'tempban':         self._cmd_tempban,
+            'softban':         self._cmd_softban,
+            'purge':           self._cmd_purge,
+            'note':            self._cmd_note,
+            'notes':           self._cmd_notes,
+            'deletenote':      self._cmd_deletenote,
+            'slowmode':        self._cmd_slowmode,
+            # Economy admin
+            'addmoney':        self._cmd_addmoney,
+            'removemoney':     self._cmd_removemoney,
+            'setmoney':        self._cmd_setmoney,
             # Ranks
             'giverank':        self._cmd_giverank,
             'takerank':        self._cmd_takerank,
@@ -323,14 +351,32 @@ class AdminCog(commands.Cog):
         db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
         db.add_warning(m.id, msg.guild.id, reason=reason,
                        warned_by=msg.author.id, is_auto=False)
+        # Each .warn = +0.5 warnpoints
+        db.add_warn_points(m.id, msg.guild.id, 0.5, reason=reason, given_by=msg.author.id)
         count = db.get_warning_count(m.id, msg.guild.id)
         cfg = db.get_guild(msg.guild.id) or {}
         limit = cfg.get('warn_limit', 3)
         e = _ok(f'Ostrzeżono **{m.display_name}** ({count}/{limit} ostrzeżeń)')
         e.add_field(name='📝 Powód', value=reason)
-        if count >= limit:
-            db.update_user(m.id, msg.guild.id, is_banned=1)
-            e.add_field(name='⚠️', value=f'Osiągnięto limit! Auto-ban z rankingu.')
+        # Auto-actions
+        action_msg = ''
+        try:
+            if count >= limit:
+                db.update_user(m.id, msg.guild.id, is_banned=1)
+                await m.ban(reason=f'Auto-ban: {count} ostrzeżeń. {reason}')
+                action_msg = '🔨 Auto-ban wykonany!'
+            elif count == 2:
+                await m.kick(reason=f'Auto-kick: 2 ostrzeżenia. {reason}')
+                action_msg = '👢 Auto-kick wykonany!'
+            elif count == 1:
+                await m.timeout(timedelta(hours=1), reason=f'Auto-timeout: 1 ostrzeżenie. {reason}')
+                action_msg = '🔇 Auto-timeout 1h wykonany!'
+        except discord.Forbidden:
+            action_msg = '⚠️ Brak uprawnień do wykonania auto-akcji.'
+        except Exception:
+            pass
+        if action_msg:
+            e.add_field(name='🤖 Auto-akcja', value=action_msg, inline=False)
         await msg.reply(embed=e, mention_author=False)
         db.log_action(msg.guild.id, 'warn', user_id=m.id, actor_id=msg.author.id,
                       details={'reason': reason, 'count': count})
@@ -1558,6 +1604,293 @@ class AdminCog(commands.Cog):
                     db.log_action(gid, 'role_sync', user_id=uid,
                                   details={'action': 'faction_removed',
                                            'faction': faction['name']})
+
+
+    # ── Warn Points ───────────────────────────────────────────────────────────
+
+    async def _cmd_warnpoints(self, msg, args):
+        if not args:
+            await msg.reply(embed=_err('`.warnpoints @user [powód]`'), mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        reason = ' '.join(args[1:]) if len(args) > 1 else 'Brak powodu'
+        db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
+        total = db.add_warn_points(m.id, msg.guild.id, 1.0, reason=reason, given_by=msg.author.id)
+        e = _ok(f'Dodano WarnPoint **{m.display_name}** (łącznie: **{total:.1f}** WP)')
+        e.add_field(name='📝 Powód', value=reason)
+        e.set_footer(text='WarnPoints nie liczą się do limitu warnów — tylko do leaderboarda')
+        await msg.reply(embed=e, mention_author=False)
+        await send_log(msg.guild, log_embed('📊 WarnPoint', YELLOW,
+            Użytkownik=m.mention, Powód=reason,
+            **{'Łącznie WP': f'{total:.1f}'}, Przez=msg.author.mention))
+
+    async def _cmd_clearwarnpoints(self, msg, args):
+        if not args:
+            await msg.reply(embed=_err('`.clearwarnpoints @user`'), mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        db.clear_warn_points(m.id, msg.guild.id)
+        await msg.reply(embed=_ok(f'Wyczyszczono WarnPoints dla **{m.display_name}**.'),
+                        mention_author=False)
+
+    async def _cmd_warnlb(self, msg, args):
+        top = db.get_warn_points_leaderboard(msg.guild.id, limit=10)
+        if not top:
+            await msg.reply(embed=discord.Embed(description='📭 Nikt nie ma WarnPoints.',
+                                                color=GREEN), mention_author=False); return
+        e = discord.Embed(title='⚠️ Ranking WarnPoints', color=YELLOW, timestamp=datetime.now())
+        lines = []
+        for i, u in enumerate(top):
+            member = msg.guild.get_member(u['user_id'])
+            name = member.display_name if member else u.get('display_name') or str(u['user_id'])
+            lines.append(f'`{i+1}.` **{name}** — {u["warn_points"]:.1f} WP')
+        e.description = '\n'.join(lines)
+        e.set_footer(text='Każdy .warn = +0.5 WP | Każdy .warnpoints = +1 WP')
+        await msg.reply(embed=e, mention_author=False)
+
+    # ── Moderation ────────────────────────────────────────────────────────────
+
+    async def _cmd_mute(self, msg, args):
+        """`.mute @user [czas] [powód]` — np. .mute @user 1h Spam"""
+        if not args:
+            await msg.reply(embed=_err('`.mute @user [czas] [powód]` — np. `.mute @user 30m spam`'),
+                            mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        duration = timedelta(minutes=10)  # default 10 min
+        reason_start = 1
+        if len(args) > 1:
+            parsed = _parse_duration(args[1])
+            if parsed:
+                duration = parsed
+                reason_start = 2
+        reason = ' '.join(args[reason_start:]) if len(args) > reason_start else 'Brak powodu'
+        max_td = timedelta(days=28)
+        if duration > max_td:
+            duration = max_td
+        try:
+            await m.timeout(duration, reason=reason)
+        except discord.Forbidden:
+            await msg.reply(embed=_err('Brak uprawnień do wyciszenia.'), mention_author=False); return
+        mins = int(duration.total_seconds() / 60)
+        time_str = f'{duration.days}d' if duration.days else (f'{mins//60}h {mins%60}m' if mins >= 60 else f'{mins}m')
+        e = _ok(f'Wyciszono **{m.display_name}** na **{time_str}**')
+        e.add_field(name='📝 Powód', value=reason)
+        await msg.reply(embed=e, mention_author=False)
+        await send_log(msg.guild, log_embed('🔇 Mute', YELLOW,
+            Użytkownik=m.mention, Czas=time_str, Powód=reason, Przez=msg.author.mention))
+
+    async def _cmd_unmute(self, msg, args):
+        if not args:
+            await msg.reply(embed=_err('`.unmute @user`'), mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        try:
+            await m.timeout(None)
+        except discord.Forbidden:
+            await msg.reply(embed=_err('Brak uprawnień.'), mention_author=False); return
+        await msg.reply(embed=_ok(f'Unmute: **{m.display_name}**'), mention_author=False)
+        await send_log(msg.guild, log_embed('🔊 Unmute', GREEN,
+            Użytkownik=m.mention, Przez=msg.author.mention))
+
+    async def _cmd_kick(self, msg, args):
+        if not args:
+            await msg.reply(embed=_err('`.kick @user [powód]`'), mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        reason = ' '.join(args[1:]) if len(args) > 1 else 'Brak powodu'
+        try:
+            await m.kick(reason=reason)
+        except discord.Forbidden:
+            await msg.reply(embed=_err('Brak uprawnień do kicka.'), mention_author=False); return
+        await msg.reply(embed=_ok(f'Wyrzucono **{m.display_name}** z serwera.'), mention_author=False)
+        db.log_action(msg.guild.id, 'kick', user_id=m.id, actor_id=msg.author.id,
+                      details={'reason': reason})
+        await send_log(msg.guild, log_embed('👢 Kick', ORANGE,
+            Użytkownik=m.mention, Powód=reason, Przez=msg.author.mention))
+
+    async def _cmd_tempban(self, msg, args):
+        """`.tempban @user <czas> [powód]`"""
+        if len(args) < 2:
+            await msg.reply(embed=_err('`.tempban @user <czas> [powód]` — np. `.tempban @user 7d nieodpowiednie zachowanie`'),
+                            mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        duration = _parse_duration(args[1])
+        if not duration:
+            await msg.reply(embed=_err('Nieprawidłowy czas. Przykład: `7d`, `24h`, `1d12h`'),
+                            mention_author=False); return
+        reason = ' '.join(args[2:]) if len(args) > 2 else 'Brak powodu'
+        unban_at = (datetime.now() + duration).strftime('%d.%m.%Y %H:%M')
+        try:
+            await m.ban(reason=f'[TEMPBAN do {unban_at}] {reason}')
+        except discord.Forbidden:
+            await msg.reply(embed=_err('Brak uprawnień do bana.'), mention_author=False); return
+        days = duration.days
+        hrs = int(duration.total_seconds() / 3600)
+        time_str = f'{days}d' if days else f'{hrs}h'
+        e = _ok(f'Tymczasowo zbanowano **{m.display_name}** na **{time_str}**')
+        e.add_field(name='📝 Powód', value=reason)
+        e.add_field(name='📅 Odban', value=unban_at, inline=True)
+        e.set_footer(text='Odban jest manualny — ustaw reminder lub użyj schedulera')
+        await msg.reply(embed=e, mention_author=False)
+        db.log_action(msg.guild.id, 'tempban', user_id=m.id, actor_id=msg.author.id,
+                      details={'reason': reason, 'until': unban_at})
+        await send_log(msg.guild, log_embed('⏳ Tempban', RED,
+            Użytkownik=m.mention, Czas=time_str, Odban=unban_at,
+            Powód=reason, Przez=msg.author.mention))
+
+    async def _cmd_softban(self, msg, args):
+        """Ban + natychmiastowy unban (usuwa wiadomości z ostatnich 7 dni)."""
+        if not args:
+            await msg.reply(embed=_err('`.softban @user [powód]`'), mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        reason = ' '.join(args[1:]) if len(args) > 1 else 'Brak powodu'
+        try:
+            await m.ban(reason=f'[SOFTBAN] {reason}', delete_message_days=7)
+            await msg.guild.unban(m, reason='Softban — automatyczny unban')
+        except discord.Forbidden:
+            await msg.reply(embed=_err('Brak uprawnień.'), mention_author=False); return
+        e = _ok(f'Softban **{m.display_name}** — wyrzucono i usunięto wiadomości (7 dni).')
+        e.add_field(name='📝 Powód', value=reason)
+        await msg.reply(embed=e, mention_author=False)
+        await send_log(msg.guild, log_embed('🧹 Softban', ORANGE,
+            Użytkownik=m.mention, Powód=reason, Przez=msg.author.mention))
+
+    async def _cmd_purge(self, msg, args):
+        if not args or not args[0].isdigit():
+            await msg.reply(embed=_err('`.purge <liczba>` — np. `.purge 10`'), mention_author=False); return
+        n = min(int(args[0]), 100)
+        try:
+            deleted = await msg.channel.purge(limit=n + 1)  # +1 for the command msg
+        except discord.Forbidden:
+            await msg.reply(embed=_err('Brak uprawnień do usuwania wiadomości.'), mention_author=False); return
+        e = _ok(f'Usunięto **{len(deleted)-1}** wiadomości.')
+        confirm = await msg.channel.send(embed=e)
+        import asyncio
+        await asyncio.sleep(3)
+        try:
+            await confirm.delete()
+        except Exception:
+            pass
+
+    async def _cmd_slowmode(self, msg, args):
+        if not args or not args[0].isdigit():
+            await msg.reply(embed=_err('`.slowmode <sekundy>` — 0 wyłącza'), mention_author=False); return
+        sec = min(int(args[0]), 21600)
+        try:
+            await msg.channel.edit(slowmode_delay=sec)
+        except discord.Forbidden:
+            await msg.reply(embed=_err('Brak uprawnień.'), mention_author=False); return
+        if sec == 0:
+            await msg.reply(embed=_ok('Slowmode wyłączony.'), mention_author=False)
+        else:
+            await msg.reply(embed=_ok(f'Slowmode ustawiony na **{sec}s**.'), mention_author=False)
+
+    async def _cmd_note(self, msg, args):
+        if len(args) < 2:
+            await msg.reply(embed=_err('`.note @user <treść>`'), mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        content = ' '.join(args[1:])
+        db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
+        note_id = db.add_note(m.id, msg.guild.id, content, msg.author.id)
+        await msg.reply(embed=_ok(f'Notatka #{note_id} dodana dla **{m.display_name}**.'),
+                        mention_author=False)
+
+    async def _cmd_notes(self, msg, args):
+        if not args:
+            await msg.reply(embed=_err('`.notes @user`'), mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        notes = db.get_notes(m.id, msg.guild.id)
+        if not notes:
+            await msg.reply(embed=discord.Embed(
+                description=f'📭 Brak notatek dla **{m.display_name}**.', color=GREEN),
+                mention_author=False); return
+        e = discord.Embed(title=f'📝 Notatki — {m.display_name}', color=YELLOW)
+        for n in notes[:10]:
+            ts = n['created_at'][:16] if n.get('created_at') else '?'
+            author = msg.guild.get_member(n['author_id'])
+            by = author.display_name if author else str(n.get('author_id', '?'))
+            e.add_field(name=f'#{n["id"]} • {ts} • {by}', value=n['content'], inline=False)
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_deletenote(self, msg, args):
+        if not args or not args[0].isdigit():
+            await msg.reply(embed=_err('`.deletenote <id>`'), mention_author=False); return
+        ok = db.delete_note(int(args[0]), msg.guild.id)
+        if ok:
+            await msg.reply(embed=_ok(f'Notatka #{args[0]} usunięta.'), mention_author=False)
+        else:
+            await msg.reply(embed=_err('Nie znaleziono notatki.'), mention_author=False)
+
+    # ── Economy Admin ─────────────────────────────────────────────────────────
+
+    async def _cmd_addmoney(self, msg, args):
+        if len(args) < 2:
+            await msg.reply(embed=_err('`.addmoney @user <kwota>`'), mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        try:
+            amount = float(args[1])
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            await msg.reply(embed=_err('Podaj poprawną kwotę.'), mention_author=False); return
+        db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
+        new = db.add_cash(m.id, msg.guild.id, amount)
+        await msg.reply(embed=_ok(f'Dodano **{amount:.0f}** 🐾 użytkownikowi **{m.display_name}**. Portfel: {new:.0f} 🐾'),
+                        mention_author=False)
+
+    async def _cmd_removemoney(self, msg, args):
+        if len(args) < 2:
+            await msg.reply(embed=_err('`.removemoney @user <kwota>`'), mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        try:
+            amount = float(args[1])
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            await msg.reply(embed=_err('Podaj poprawną kwotę.'), mention_author=False); return
+        db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
+        new = db.add_cash(m.id, msg.guild.id, -amount)
+        await msg.reply(embed=_ok(f'Odjęto **{amount:.0f}** 🐾 od **{m.display_name}**. Portfel: {new:.0f} 🐾'),
+                        mention_author=False)
+
+    async def _cmd_setmoney(self, msg, args):
+        if len(args) < 2:
+            await msg.reply(embed=_err('`.setmoney @user <kwota>`'), mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        try:
+            amount = float(args[1])
+            if amount < 0:
+                raise ValueError
+        except ValueError:
+            await msg.reply(embed=_err('Podaj poprawną kwotę (>=0).'), mention_author=False); return
+        db.ensure_user(m.id, msg.guild.id, str(m), m.display_name)
+        with db._lock:
+            with db._get_conn() as conn:
+                conn.execute('UPDATE users SET cash=? WHERE user_id=? AND guild_id=?',
+                             (amount, m.id, msg.guild.id))
+                conn.commit()
+        await msg.reply(embed=_ok(f'Ustawiono portfel **{m.display_name}** na **{amount:.0f}** 🐾.'),
+                        mention_author=False)
 
 
 async def setup(bot: commands.Bot):

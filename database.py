@@ -314,6 +314,22 @@ def _run_migrations(conn):
             order_index        INTEGER DEFAULT 0,
             is_radio_bridge    INTEGER DEFAULT 0,
             created_at         TEXT    DEFAULT (datetime('now')))""",
+        # Economy & warn points
+        "ALTER TABLE users ADD COLUMN warn_points REAL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN cash REAL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN bank REAL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN rep_points INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN daily_last TEXT DEFAULT NULL",
+        "ALTER TABLE users ADD COLUMN work_last TEXT DEFAULT NULL",
+        "ALTER TABLE users ADD COLUMN beg_last TEXT DEFAULT NULL",
+        "ALTER TABLE users ADD COLUMN rep_last TEXT DEFAULT NULL",
+        """CREATE TABLE IF NOT EXISTS notes (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER NOT NULL,
+            guild_id   INTEGER NOT NULL,
+            content    TEXT    NOT NULL,
+            author_id  INTEGER DEFAULT NULL,
+            created_at TEXT    DEFAULT (datetime('now')))""",
     ]
     for m in migrations:
         try:
@@ -1711,3 +1727,149 @@ def get_next_channel(guild_id: int, current_channel_id: int) -> Optional[Dict]:
     except ValueError:
         next_idx = 0
     return channels[next_idx]
+
+
+# ─── Warn Points ──────────────────────────────────────────────────────────────
+
+def add_warn_points(user_id: int, guild_id: int, amount: float,
+                    reason: str = '', given_by: int = None) -> float:
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute(
+                'UPDATE users SET warn_points = warn_points + ? WHERE user_id=? AND guild_id=?',
+                (amount, user_id, guild_id))
+            conn.commit()
+    u = get_user(user_id, guild_id)
+    return u['warn_points'] if u else amount
+
+
+def get_warn_points_leaderboard(guild_id: int, limit: int = 10) -> List[Dict]:
+    with _get_conn() as conn:
+        rows = conn.execute(
+            'SELECT * FROM users WHERE guild_id=? AND warn_points > 0 AND is_banned=0 '
+            'ORDER BY warn_points DESC LIMIT ?', (guild_id, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def clear_warn_points(user_id: int, guild_id: int) -> None:
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute('UPDATE users SET warn_points=0 WHERE user_id=? AND guild_id=?',
+                         (user_id, guild_id))
+            conn.commit()
+
+
+# ─── Notes ────────────────────────────────────────────────────────────────────
+
+def add_note(user_id: int, guild_id: int, content: str, author_id: int = None) -> int:
+    with _lock:
+        with _get_conn() as conn:
+            cur = conn.execute(
+                'INSERT INTO notes (user_id, guild_id, content, author_id) VALUES (?,?,?,?)',
+                (user_id, guild_id, content, author_id))
+            conn.commit()
+            return cur.lastrowid
+
+
+def get_notes(user_id: int, guild_id: int) -> List[Dict]:
+    with _get_conn() as conn:
+        rows = conn.execute(
+            'SELECT * FROM notes WHERE user_id=? AND guild_id=? ORDER BY created_at DESC',
+            (user_id, guild_id)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_note(note_id: int, guild_id: int) -> bool:
+    with _lock:
+        with _get_conn() as conn:
+            cur = conn.execute('DELETE FROM notes WHERE id=? AND guild_id=?', (note_id, guild_id))
+            conn.commit()
+            return cur.rowcount > 0
+
+
+# ─── Economy ──────────────────────────────────────────────────────────────────
+
+def get_wallet(user_id: int, guild_id: int) -> Dict:
+    u = get_user(user_id, guild_id)
+    if not u:
+        return {'cash': 0.0, 'bank': 0.0}
+    return {'cash': u.get('cash') or 0.0, 'bank': u.get('bank') or 0.0}
+
+
+def add_cash(user_id: int, guild_id: int, amount: float) -> float:
+    """Add (or subtract) cash from wallet. Returns new cash balance."""
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute(
+                'UPDATE users SET cash = MAX(0, cash + ?) WHERE user_id=? AND guild_id=?',
+                (amount, user_id, guild_id))
+            conn.commit()
+    return get_wallet(user_id, guild_id)['cash']
+
+
+def transfer_cash(from_id: int, to_id: int, guild_id: int, amount: float) -> bool:
+    """Move cash between users. Returns False if sender has insufficient funds."""
+    with _lock:
+        with _get_conn() as conn:
+            sender = conn.execute(
+                'SELECT cash FROM users WHERE user_id=? AND guild_id=?',
+                (from_id, guild_id)).fetchone()
+            if not sender or sender['cash'] < amount:
+                return False
+            conn.execute(
+                'UPDATE users SET cash = cash - ? WHERE user_id=? AND guild_id=?',
+                (amount, from_id, guild_id))
+            conn.execute(
+                'UPDATE users SET cash = cash + ? WHERE user_id=? AND guild_id=?',
+                (amount, to_id, guild_id))
+            conn.commit()
+    return True
+
+
+def deposit_cash(user_id: int, guild_id: int, amount: float) -> bool:
+    with _lock:
+        with _get_conn() as conn:
+            row = conn.execute(
+                'SELECT cash FROM users WHERE user_id=? AND guild_id=?',
+                (user_id, guild_id)).fetchone()
+            if not row or row['cash'] < amount:
+                return False
+            conn.execute(
+                'UPDATE users SET cash = cash - ?, bank = bank + ? WHERE user_id=? AND guild_id=?',
+                (amount, amount, user_id, guild_id))
+            conn.commit()
+    return True
+
+
+def withdraw_cash(user_id: int, guild_id: int, amount: float) -> bool:
+    with _lock:
+        with _get_conn() as conn:
+            row = conn.execute(
+                'SELECT bank FROM users WHERE user_id=? AND guild_id=?',
+                (user_id, guild_id)).fetchone()
+            if not row or row['bank'] < amount:
+                return False
+            conn.execute(
+                'UPDATE users SET bank = bank - ?, cash = cash + ? WHERE user_id=? AND guild_id=?',
+                (amount, amount, user_id, guild_id))
+            conn.commit()
+    return True
+
+
+def set_cooldown(user_id: int, guild_id: int, field: str) -> None:
+    """Set a cooldown timestamp (daily_last, work_last, beg_last, rep_last)."""
+    now = datetime.now().isoformat()
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute(
+                f'UPDATE users SET {field}=? WHERE user_id=? AND guild_id=?',
+                (now, user_id, guild_id))
+            conn.commit()
+
+
+def get_eco_leaderboard(guild_id: int, limit: int = 10) -> List[Dict]:
+    with _get_conn() as conn:
+        rows = conn.execute(
+            'SELECT *, (cash + bank) as total FROM users WHERE guild_id=? AND is_banned=0 '
+            'ORDER BY total DESC LIMIT ?', (guild_id, limit)).fetchall()
+        return [dict(r) for r in rows]
