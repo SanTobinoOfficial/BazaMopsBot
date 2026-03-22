@@ -1,0 +1,459 @@
+{% extends 'base.html' %}
+{% block title %}Panel Komend – {{ guild_name }}{% endblock %}
+
+{% block extra_head %}
+<style>
+  .cmd-palette { background: var(--bs-tertiary-bg); border-radius: 8px; }
+  .cmd-btn { background: none; border: none; color: #99aab5; padding: .45rem 1rem;
+             text-align: left; width: 100%; border-radius: 6px; font-size: .85rem;
+             transition: all .15s; cursor: pointer; }
+  .cmd-btn:hover { background: rgba(114,137,218,.15); color: #fff; }
+  .cmd-btn.active { background: rgba(114,137,218,.25); color: var(--discord-blue); font-weight: 600; }
+  .cmd-section-label { font-size: .65rem; text-transform: uppercase; letter-spacing: .1em;
+                        color: #6c757d; padding: .5rem 1rem .25rem; }
+  .form-panel { background: var(--bs-secondary-bg); border-radius: 8px; border: 1px solid #40444b; }
+  .result-box { background: var(--bs-tertiary-bg); border-radius: 6px; padding: 1rem;
+                font-family: monospace; font-size: .85rem; min-height: 60px;
+                border: 1px solid #40444b; display: none; }
+  .result-box.show { display: block; }
+  .result-ok  { border-color: var(--discord-green) !important; color: var(--discord-green); }
+  .result-err { border-color: var(--discord-red) !important;   color: var(--discord-red);   }
+  .log-entry { padding: .4rem .75rem; border-bottom: 1px solid rgba(255,255,255,.05);
+               font-size: .82rem; }
+  .log-entry:last-child { border-bottom: none; }
+  .log-ok  { border-left: 3px solid var(--discord-green); }
+  .log-err { border-left: 3px solid var(--discord-red); }
+  .form-control, .form-select {
+    background: var(--bs-tertiary-bg); border-color: #40444b; color: #fff; }
+  .form-control:focus, .form-select:focus {
+    background: var(--bs-tertiary-bg); border-color: var(--discord-blue);
+    box-shadow: 0 0 0 .2rem rgba(114,137,218,.25); color: #fff; }
+  .form-control::placeholder { color: #6c757d; }
+  .field-group { display: none; }
+  .field-group.visible { display: block; }
+  .badge-admin { background: rgba(240,71,71,.2); color: var(--discord-red);
+                  border: 1px solid rgba(240,71,71,.3); font-size: .65rem; }
+  #user-search-results { position: absolute; z-index: 999; background: var(--bs-tertiary-bg);
+                          border: 1px solid #40444b; border-radius: 6px; width: 100%;
+                          max-height: 200px; overflow-y: auto; }
+  .user-result-item { padding: .4rem .75rem; cursor: pointer; display: flex;
+                       align-items: center; gap: .5rem; }
+  .user-result-item:hover { background: rgba(114,137,218,.15); }
+  .cmd-icon { width: 20px; text-align: center; opacity: .7; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <div>
+    <h3 class="fw-bold text-white mb-0">⚡ Panel Komend</h3>
+    <small class="text-muted">Wykonuj komendy bota bezpośrednio z dashboardu</small>
+  </div>
+</div>
+
+<div class="row g-3">
+  <!-- LEFT: Command palette -->
+  <div class="col-12 col-md-3">
+    <div class="cmd-palette p-2">
+
+      <div class="cmd-section-label">💰 Punkty</div>
+      <button class="cmd-btn" data-cmd="addpoints"><span class="cmd-icon">➕</span> Dodaj punkty</button>
+      <button class="cmd-btn" data-cmd="removepoints"><span class="cmd-icon">➖</span> Odejmij punkty</button>
+      <button class="cmd-btn" data-cmd="setpoints"><span class="cmd-icon">✏️</span> Ustaw punkty</button>
+
+      <div class="cmd-section-label mt-2">🐾 Ekonomia</div>
+      <button class="cmd-btn" data-cmd="addmoney"><span class="cmd-icon">➕</span> Dodaj mopsy</button>
+      <button class="cmd-btn" data-cmd="removemoney"><span class="cmd-icon">➖</span> Odejmij mopsy</button>
+      <button class="cmd-btn" data-cmd="setmoney"><span class="cmd-icon">✏️</span> Ustaw mopsy</button>
+
+      <div class="cmd-section-label mt-2">⚠️ Moderacja</div>
+      <button class="cmd-btn" data-cmd="warn"><span class="cmd-icon">⚠️</span> Warn</button>
+      <button class="cmd-btn" data-cmd="warnpoints"><span class="cmd-icon">📊</span> WarnPoints</button>
+      <button class="cmd-btn" data-cmd="clearwarn"><span class="cmd-icon">🗑️</span> Usuń warny</button>
+      <button class="cmd-btn" data-cmd="mute"><span class="cmd-icon">🔇</span> Mute/Timeout</button>
+      <button class="cmd-btn" data-cmd="unmute"><span class="cmd-icon">🔊</span> Unmute</button>
+      <button class="cmd-btn" data-cmd="kick"><span class="cmd-icon">👢</span> Kick</button>
+      <button class="cmd-btn" data-cmd="discordban"><span class="cmd-icon">🔨</span> Discord Ban</button>
+      <button class="cmd-btn" data-cmd="discordunban"><span class="cmd-icon">✅</span> Discord Unban</button>
+      <button class="cmd-btn" data-cmd="softban"><span class="cmd-icon">💨</span> Soft Ban</button>
+      <button class="cmd-btn" data-cmd="purge"><span class="cmd-icon">🧹</span> Purge</button>
+
+      <div class="cmd-section-label mt-2">🔒 Kanały</div>
+      <button class="cmd-btn" data-cmd="lock"><span class="cmd-icon">🔒</span> Lock kanał</button>
+      <button class="cmd-btn" data-cmd="unlock"><span class="cmd-icon">🔓</span> Unlock kanał</button>
+      <button class="cmd-btn" data-cmd="hide"><span class="cmd-icon">🙈</span> Ukryj kanał</button>
+      <button class="cmd-btn" data-cmd="unhide"><span class="cmd-icon">👁️</span> Odkryj kanał</button>
+      <button class="cmd-btn" data-cmd="nick"><span class="cmd-icon">✏️</span> Nick</button>
+
+      <div class="cmd-section-label mt-2">⭐ Rangi</div>
+      <button class="cmd-btn" data-cmd="giverank"><span class="cmd-icon">⭐</span> Nadaj rangę</button>
+      <button class="cmd-btn" data-cmd="takerank"><span class="cmd-icon">⬇️</span> Odbierz rangę</button>
+
+      <div class="cmd-section-label mt-2">👤 Użytkownik</div>
+      <button class="cmd-btn" data-cmd="forceclockout"><span class="cmd-icon">⏹️</span> Force clockout</button>
+      <button class="cmd-btn" data-cmd="resetuser"><span class="cmd-icon">🔄</span> Reset usera</button>
+      <button class="cmd-btn" data-cmd="assignfaction"><span class="cmd-icon">⚔️</span> Przypisz frakcję</button>
+
+      <div class="cmd-section-label mt-2">🏷️ Tagi</div>
+      <button class="cmd-btn" data-cmd="tagcreate"><span class="cmd-icon">➕</span> Utwórz tag</button>
+      <button class="cmd-btn" data-cmd="tagdelete"><span class="cmd-icon">🗑️</span> Usuń tag</button>
+
+      <div class="cmd-section-label mt-2">📢 Ogłoszenia</div>
+      <button class="cmd-btn" data-cmd="announce"><span class="cmd-icon">📢</span> Ogłoszenie</button>
+    </div>
+  </div>
+
+  <!-- RIGHT: Form + result -->
+  <div class="col-12 col-md-9">
+    <div class="form-panel p-4">
+      <div id="cmd-title" class="mb-3">
+        <h5 class="text-white mb-0">← Wybierz komendę z listy</h5>
+        <small class="text-muted">Kliknij komendę po lewej aby wypełnić formularz</small>
+      </div>
+
+      <form id="cmd-form" style="display:none">
+        <input type="hidden" id="cmd-name" name="cmd">
+
+        <!-- USER FIELD -->
+        <div class="field-group mb-3" id="field-user">
+          <label class="form-label text-white fw-semibold">👤 Użytkownik</label>
+          <div class="position-relative">
+            <input type="text" id="user-search-input" class="form-control"
+                   placeholder="Zacznij pisać nick lub ID...">
+            <div id="user-search-results" style="display:none"></div>
+            <input type="hidden" id="user-id-hidden" name="user_id">
+            <div id="user-selected" class="mt-1" style="display:none">
+              <span class="badge" style="background:rgba(114,137,218,.2);color:var(--discord-blue);font-size:.85rem"
+                    id="user-selected-name"></span>
+              <button type="button" class="btn btn-sm btn-link text-muted p-0 ms-1" id="user-clear">× zmień</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- USER ID DIRECT (for unban) -->
+        <div class="field-group mb-3" id="field-userid-direct">
+          <label class="form-label text-white fw-semibold">🆔 ID Użytkownika</label>
+          <input type="text" class="form-control" name="user_id_direct" placeholder="Np. 123456789012345678">
+          <small class="text-muted">Wpisz ID bezpośrednio (użytkownik może nie być na serwerze)</small>
+        </div>
+
+        <!-- AMOUNT FIELD -->
+        <div class="field-group mb-3" id="field-amount">
+          <label class="form-label text-white fw-semibold" id="amount-label">Ilość</label>
+          <input type="number" class="form-control" name="amount" min="0" step="0.5" placeholder="0">
+        </div>
+
+        <!-- REASON FIELD -->
+        <div class="field-group mb-3" id="field-reason">
+          <label class="form-label text-white fw-semibold">📝 Powód</label>
+          <input type="text" class="form-control" name="reason" placeholder="Powód (opcjonalny)">
+        </div>
+
+        <!-- NOTE FIELD -->
+        <div class="field-group mb-3" id="field-note">
+          <label class="form-label text-white fw-semibold">📝 Nota</label>
+          <input type="text" class="form-control" name="note" placeholder="Nota do transakcji (opcjonalna)">
+        </div>
+
+        <!-- DURATION FIELD -->
+        <div class="field-group mb-3" id="field-duration">
+          <label class="form-label text-white fw-semibold">⏱️ Czas trwania</label>
+          <input type="text" class="form-control" name="duration" placeholder="Np. 1h, 30m, 2d, 1h30m">
+          <small class="text-muted">Formaty: 10s, 30m, 1h, 2d</small>
+        </div>
+
+        <!-- CHANNEL FIELD -->
+        <div class="field-group mb-3" id="field-channel">
+          <label class="form-label text-white fw-semibold">💬 Kanał</label>
+          <select class="form-select" name="channel_id">
+            <option value="">-- Wybierz kanał --</option>
+            {% for ch in text_channels %}
+            <option value="{{ ch.id }}">#{{ ch.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- RANK FIELD -->
+        <div class="field-group mb-3" id="field-rank">
+          <label class="form-label text-white fw-semibold">⭐ Ranga</label>
+          <select class="form-select" name="rank_id">
+            <option value="">-- Wybierz rangę --</option>
+            {% for r in ranks %}
+            <option value="{{ r.id }}">{{ r.icon }} {{ r.name }}
+              {% if r.is_special %}(specjalna){% endif %}
+              {% if r.is_owner_only %}(UNIT){% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- FACTION FIELD -->
+        <div class="field-group mb-3" id="field-faction">
+          <label class="form-label text-white fw-semibold">⚔️ Frakcja</label>
+          <select class="form-select" name="faction_id">
+            <option value="">-- Wybierz frakcję --</option>
+            {% for f in factions %}
+            <option value="{{ f.id }}">{{ f.icon }} {{ f.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- NICK FIELD -->
+        <div class="field-group mb-3" id="field-nick">
+          <label class="form-label text-white fw-semibold">✏️ Nowy nick</label>
+          <input type="text" class="form-control" name="nick" placeholder="Wpisz nick (zostaw puste = reset)">
+        </div>
+
+        <!-- TAG NAME -->
+        <div class="field-group mb-3" id="field-tagname">
+          <label class="form-label text-white fw-semibold">🏷️ Nazwa tagu</label>
+          <input type="text" class="form-control" name="tag_name" placeholder="Np. regulamin, info">
+        </div>
+
+        <!-- TAG CONTENT -->
+        <div class="field-group mb-3" id="field-tagcontent">
+          <label class="form-label text-white fw-semibold">📄 Treść tagu</label>
+          <textarea class="form-control" name="tag_content" rows="3"
+                    placeholder="Treść która zostanie wysłana na Discord..."></textarea>
+        </div>
+
+        <!-- ANNOUNCE TEXT -->
+        <div class="field-group mb-3" id="field-announce">
+          <label class="form-label text-white fw-semibold">📢 Treść ogłoszenia</label>
+          <textarea class="form-control" name="announce_text" rows="3"
+                    placeholder="Treść ogłoszenia..."></textarea>
+        </div>
+
+        <!-- PURGE COUNT -->
+        <div class="field-group mb-3" id="field-purge">
+          <label class="form-label text-white fw-semibold">🧹 Liczba wiadomości</label>
+          <input type="number" class="form-control" name="purge_count" min="1" max="100" value="10">
+          <small class="text-muted">Maks. 100 wiadomości</small>
+        </div>
+
+        <div class="d-flex gap-2 align-items-center">
+          <button type="submit" class="btn btn-discord px-4" id="cmd-submit">
+            <i class="bi bi-play-fill me-1"></i> Wykonaj
+          </button>
+          <span id="cmd-spinner" class="spinner-border spinner-border-sm text-light"
+                style="display:none" role="status"></span>
+        </div>
+      </form>
+
+      <!-- Result box -->
+      <div id="result-box" class="result-box mt-3"></div>
+    </div>
+
+    <!-- Activity log -->
+    <div class="card mt-3">
+      <div class="card-header d-flex justify-content-between align-items-center py-2">
+        <span class="fw-semibold text-white">📋 Ostatnie akcje (ta sesja)</span>
+        <button class="btn btn-sm btn-outline-secondary" id="clear-log">Wyczyść</button>
+      </div>
+      <div id="cmd-log" class="card-body p-0">
+        <div class="log-entry text-muted" style="font-size:.8rem">Brak akcji w tej sesji.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const GUILD_ID = {{ guild_id }};
+const USERS = {{ users_json | safe }};
+
+// Command → which fields to show
+const CMD_CONFIG = {
+  addpoints:     { fields: ['user','amount','note'],           amountLabel: '💰 Punkty do dodania',    title: '➕ Dodaj punkty' },
+  removepoints:  { fields: ['user','amount','note'],           amountLabel: '💰 Punkty do odjęcia',    title: '➖ Odejmij punkty' },
+  setpoints:     { fields: ['user','amount'],                  amountLabel: '💰 Nowa wartość punktów', title: '✏️ Ustaw punkty' },
+  addmoney:      { fields: ['user','amount'],                  amountLabel: '🐾 Mopsy do dodania',     title: '➕ Dodaj mopsy' },
+  removemoney:   { fields: ['user','amount'],                  amountLabel: '🐾 Mopsy do odjęcia',     title: '➖ Odejmij mopsy' },
+  setmoney:      { fields: ['user','amount'],                  amountLabel: '🐾 Nowa kwota mopsów',    title: '✏️ Ustaw mopsy' },
+  warn:          { fields: ['user','reason'],                                                           title: '⚠️ Warn (+ auto-akcja)' },
+  warnpoints:    { fields: ['user','reason'],                                                           title: '📊 WarnPoints (+1 do lb)' },
+  clearwarn:     { fields: ['user'],                                                                    title: '🗑️ Usuń wszystkie warny' },
+  mute:          { fields: ['user','duration','reason'],                                                title: '🔇 Mute / Timeout' },
+  unmute:        { fields: ['user'],                                                                    title: '🔊 Unmute / Cofnij timeout' },
+  kick:          { fields: ['user','reason'],                                                           title: '👢 Kick z serwera' },
+  discordban:    { fields: ['user','reason'],                                                           title: '🔨 Discord Ban' },
+  discordunban:  { fields: ['userid-direct'],                                                           title: '✅ Discord Unban (po ID)' },
+  softban:       { fields: ['user','reason'],                                                           title: '💨 Soft Ban (ban+unban)' },
+  purge:         { fields: ['channel','purge'],                                                         title: '🧹 Purge wiadomości' },
+  lock:          { fields: ['channel'],                                                                  title: '🔒 Zablokuj kanał' },
+  unlock:        { fields: ['channel'],                                                                  title: '🔓 Odblokuj kanał' },
+  hide:          { fields: ['channel'],                                                                  title: '🙈 Ukryj kanał' },
+  unhide:        { fields: ['channel'],                                                                  title: '👁️ Odkryj kanał' },
+  nick:          { fields: ['user','nick'],                                                              title: '✏️ Zmień nick' },
+  giverank:      { fields: ['user','rank'],                                                              title: '⭐ Nadaj rangę' },
+  takerank:      { fields: ['user','rank'],                                                              title: '⬇️ Odbierz rangę' },
+  forceclockout: { fields: ['user'],                                                                    title: '⏹️ Wymuś clock-out' },
+  resetuser:     { fields: ['user'],                                                                    title: '🔄 Reset danych usera' },
+  assignfaction: { fields: ['user','faction'],                                                          title: '⚔️ Przypisz frakcję' },
+  tagcreate:     { fields: ['tagname','tagcontent'],                                                    title: '➕ Utwórz tag' },
+  tagdelete:     { fields: ['tagname'],                                                                  title: '🗑️ Usuń tag' },
+  announce:      { fields: ['channel','announce'],                                                      title: '📢 Ogłoszenie' },
+};
+
+const ALL_FIELDS = ['user','userid-direct','amount','reason','note','duration','channel',
+                    'rank','faction','nick','tagname','tagcontent','announce','purge'];
+
+let activeCmd = null;
+
+// Command palette click
+document.querySelectorAll('.cmd-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.cmd-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const cmd = btn.dataset.cmd;
+    activeCmd = cmd;
+    showCommand(cmd);
+  });
+});
+
+function showCommand(cmd) {
+  const cfg = CMD_CONFIG[cmd];
+  if (!cfg) return;
+
+  document.getElementById('cmd-name').value = cmd;
+  document.getElementById('cmd-title').innerHTML =
+    `<h5 class="text-white mb-0">${cfg.title}</h5>
+     <small class="text-muted">Komenda: <code>.${cmd}</code></small>`;
+
+  // Hide all fields
+  ALL_FIELDS.forEach(f => {
+    const el = document.getElementById('field-' + f);
+    if (el) { el.classList.remove('visible'); }
+  });
+
+  // Show relevant fields
+  (cfg.fields || []).forEach(f => {
+    const el = document.getElementById('field-' + f);
+    if (el) el.classList.add('visible');
+  });
+
+  // Set amount label
+  if (cfg.amountLabel) {
+    document.getElementById('amount-label').textContent = cfg.amountLabel;
+  }
+
+  document.getElementById('result-box').className = 'result-box mt-3';
+  document.getElementById('result-box').textContent = '';
+  document.getElementById('cmd-form').style.display = 'block';
+}
+
+// User search
+const searchInput = document.getElementById('user-search-input');
+const searchResults = document.getElementById('user-search-results');
+const userIdHidden = document.getElementById('user-id-hidden');
+const userSelected = document.getElementById('user-selected');
+const userSelectedName = document.getElementById('user-selected-name');
+const userClear = document.getElementById('user-clear');
+
+searchInput.addEventListener('input', () => {
+  const q = searchInput.value.toLowerCase().trim();
+  if (!q) { searchResults.style.display = 'none'; return; }
+  const matches = USERS.filter(u =>
+    u.name.toLowerCase().includes(q) || String(u.id).includes(q)
+  ).slice(0, 8);
+  if (!matches.length) { searchResults.style.display = 'none'; return; }
+  searchResults.innerHTML = matches.map(u => `
+    <div class="user-result-item" data-id="${u.id}" data-name="${u.name}">
+      <div class="avatar-sm avatar-placeholder" style="font-size:.7rem;width:28px;height:28px">
+        ${u.name[0].toUpperCase()}
+      </div>
+      <div>
+        <div style="font-size:.85rem">${u.name}</div>
+        <div style="font-size:.7rem;color:#6c757d">${u.id}</div>
+      </div>
+    </div>`).join('');
+  searchResults.style.display = 'block';
+});
+
+searchResults.addEventListener('click', e => {
+  const item = e.target.closest('.user-result-item');
+  if (!item) return;
+  userIdHidden.value = item.dataset.id;
+  userSelectedName.textContent = item.dataset.name + ' (' + item.dataset.id + ')';
+  userSelected.style.display = 'block';
+  searchInput.style.display = 'none';
+  searchResults.style.display = 'none';
+});
+
+userClear.addEventListener('click', () => {
+  userIdHidden.value = '';
+  searchInput.value = '';
+  userSelected.style.display = 'none';
+  searchInput.style.display = 'block';
+  searchInput.focus();
+});
+
+document.addEventListener('click', e => {
+  if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
+    searchResults.style.display = 'none';
+  }
+});
+
+// Form submit via AJAX
+document.getElementById('cmd-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const form = e.target;
+  const resultBox = document.getElementById('result-box');
+  const spinner = document.getElementById('cmd-spinner');
+  const submitBtn = document.getElementById('cmd-submit');
+
+  spinner.style.display = 'inline-block';
+  submitBtn.disabled = true;
+  resultBox.className = 'result-box mt-3';
+  resultBox.textContent = '';
+
+  const body = new FormData(form);
+
+  try {
+    const resp = await fetch(`/guild/${GUILD_ID}/execute-command`, {
+      method: 'POST',
+      body: body,
+    });
+    const data = await resp.json();
+
+    resultBox.classList.add('show');
+    if (data.ok) {
+      resultBox.classList.add('result-ok');
+      resultBox.textContent = '✅ ' + data.message;
+      addLog(activeCmd, data.message, true);
+    } else {
+      resultBox.classList.add('result-err');
+      resultBox.textContent = '❌ ' + data.error;
+      addLog(activeCmd, data.error, false);
+    }
+  } catch (err) {
+    resultBox.classList.add('show', 'result-err');
+    resultBox.textContent = '❌ Błąd połączenia: ' + err.message;
+  } finally {
+    spinner.style.display = 'none';
+    submitBtn.disabled = false;
+  }
+});
+
+// Activity log
+const logEl = document.getElementById('cmd-log');
+let logEmpty = true;
+
+function addLog(cmd, msg, ok) {
+  if (logEmpty) { logEl.innerHTML = ''; logEmpty = false; }
+  const now = new Date().toLocaleTimeString('pl-PL');
+  const div = document.createElement('div');
+  div.className = 'log-entry ' + (ok ? 'log-ok' : 'log-err');
+  div.innerHTML = `<span class="text-muted" style="font-size:.75rem">${now}</span>
+    <code class="ms-2" style="font-size:.8rem">.${cmd}</code>
+    <span class="ms-2" style="color:${ok ? 'var(--discord-green)' : 'var(--discord-red)'}">${msg}</span>`;
+  logEl.insertBefore(div, logEl.firstChild);
+  // Keep max 20 entries
+  while (logEl.children.length > 20) logEl.removeChild(logEl.lastChild);
+}
+
+document.getElementById('clear-log').addEventListener('click', () => {
+  logEl.innerHTML = '<div class="log-entry text-muted" style="font-size:.8rem">Brak akcji w tej sesji.</div>';
+  logEmpty = true;
+});
+</script>
+{% endblock %}

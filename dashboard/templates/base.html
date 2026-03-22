@@ -164,9 +164,15 @@
       </a>
     </li>
     <li class="nav-item">
+      <a class="nav-link {% if request.endpoint == 'command_panel_page' %}active{% endif %}"
+         href="{{ url_for('command_panel_page', guild_id=guild_id) }}">
+        <i class="bi bi-lightning-charge me-2"></i>Panel Komend
+      </a>
+    </li>
+    <li class="nav-item">
       <a class="nav-link {% if request.endpoint == 'commands_page' %}active{% endif %}"
          href="{{ url_for('commands_page', guild_id=guild_id) }}">
-        <i class="bi bi-terminal me-2"></i>Komendy
+        <i class="bi bi-terminal me-2"></i>Lista Komend
       </a>
     </li>
   </ul>

@@ -282,7 +282,7 @@ def index():
     return render_template('index.html', guilds=guilds)
 
 
-# ─── Commands page ────────────────────────────────────────────────────────────
+# ─── Commands reference page ──────────────────────────────────────────────────
 
 @app.route('/guild/<int:guild_id>/commands')
 @login_required
@@ -293,6 +293,371 @@ def commands_page(guild_id):
                            guild_id=guild_id,
                            guild_name=info.get('name', str(guild_id)),
                            icon_url=info.get('icon_url'))
+
+
+# ─── Command Panel (execute commands from GUI) ────────────────────────────────
+
+@app.route('/guild/<int:guild_id>/command-panel')
+@login_required
+def command_panel_page(guild_id):
+    db.ensure_guild(guild_id)
+    info         = _guild_info(guild_id)
+    users        = db.get_all_users(guild_id)
+    ranks        = db.get_ranks(guild_id)
+    factions     = db.get_factions(guild_id)
+    channels_raw = _dget(f'/guilds/{guild_id}/channels') or []
+    text_channels = sorted(
+        [type('C', (), {'id': str(c['id']), 'name': c['name']})()
+         for c in channels_raw if c.get('type') == 0],
+        key=lambda c: c.name)
+    import json as _json
+    users_json = _json.dumps([
+        {'id': str(u['user_id']),
+         'name': u.get('display_name') or u.get('username') or str(u['user_id'])}
+        for u in users
+    ])
+    return render_template('command_panel.html',
+                           guild_id=guild_id,
+                           guild_name=info.get('name', str(guild_id)),
+                           icon_url=info.get('icon_url'),
+                           users_json=users_json,
+                           ranks=ranks,
+                           factions=factions,
+                           text_channels=text_channels)
+
+
+def _parse_dur_seconds(s: str):
+    """Parse '1h30m' style string to seconds. Returns None on failure."""
+    import re
+    m = re.fullmatch(r'(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?', s.strip().lower())
+    if not m or not any(m.groups()):
+        return None
+    d, h, mi, sec = (int(x) if x else 0 for x in m.groups())
+    total = d*86400 + h*3600 + mi*60 + sec
+    return total if total > 0 else None
+
+
+@app.route('/guild/<int:guild_id>/execute-command', methods=['POST'])
+@login_required
+def execute_command(guild_id):
+    from flask import jsonify as _json
+    from datetime import datetime, timezone, timedelta
+
+    cmd        = request.form.get('cmd', '').strip()
+    user_id    = request.form.get('user_id', '').strip()
+    amount_str = request.form.get('amount', '').strip()
+    reason     = request.form.get('reason', 'Dashboard').strip() or 'Dashboard'
+    note       = request.form.get('note', '').strip()
+    duration   = request.form.get('duration', '').strip()
+    channel_id = request.form.get('channel_id', '').strip()
+    rank_id    = request.form.get('rank_id', '').strip()
+    faction_id = request.form.get('faction_id', '').strip()
+    nick       = request.form.get('nick', '').strip()
+    tag_name   = request.form.get('tag_name', '').strip().lower()
+    tag_content= request.form.get('tag_content', '').strip()
+    announce   = request.form.get('announce_text', '').strip()
+    purge_n    = request.form.get('purge_count', '10').strip()
+    uid_direct = request.form.get('user_id_direct', '').strip()
+
+    def ok(msg):   return _json({'ok': True,  'message': msg})
+    def err(msg):  return _json({'ok': False, 'error':   msg})
+
+    db.ensure_guild(guild_id)
+
+    # ── helpers ────────────────────────────────────────────────────────────────
+    def _uid():
+        try: return int(user_id)
+        except: return None
+
+    def _amt():
+        try: return float(amount_str)
+        except: return None
+
+    # ── POINTS ────────────────────────────────────────────────────────────────
+    if cmd == 'addpoints':
+        uid = _uid(); amt = _amt()
+        if not uid: return err('Wybierz użytkownika.')
+        if amt is None or amt <= 0: return err('Podaj poprawną liczbę punktów.')
+        db.ensure_user(uid, guild_id)
+        new = db.add_points(uid, guild_id, amt,
+                            note=note or f'Dashboard +{amt}', transaction_type='manual', assigned_by=0)
+        return ok(f'+{amt:.1f} pkt → nowy stan: {new:.1f} pkt')
+
+    if cmd == 'removepoints':
+        uid = _uid(); amt = _amt()
+        if not uid: return err('Wybierz użytkownika.')
+        if amt is None or amt <= 0: return err('Podaj poprawną liczbę punktów.')
+        db.ensure_user(uid, guild_id)
+        new = db.add_points(uid, guild_id, -amt,
+                            note=note or f'Dashboard -{amt}', transaction_type='manual', assigned_by=0)
+        return ok(f'-{amt:.1f} pkt → nowy stan: {new:.1f} pkt')
+
+    if cmd == 'setpoints':
+        uid = _uid(); amt = _amt()
+        if not uid: return err('Wybierz użytkownika.')
+        if amt is None or amt < 0: return err('Podaj poprawną liczbę punktów.')
+        db.ensure_user(uid, guild_id)
+        new = db.set_points(uid, guild_id, amt, note='Ustawione z Dashboardu', assigned_by=0)
+        return ok(f'Punkty ustawione na {new:.1f} pkt')
+
+    # ── ECONOMY ───────────────────────────────────────────────────────────────
+    if cmd == 'addmoney':
+        uid = _uid(); amt = _amt()
+        if not uid: return err('Wybierz użytkownika.')
+        if amt is None or amt <= 0: return err('Podaj poprawną kwotę.')
+        db.ensure_user(uid, guild_id)
+        db.add_cash(uid, guild_id, amt)
+        w = db.get_wallet(uid, guild_id)
+        return ok(f'+{amt:.0f} 🐾 → gotówka: {int(w["cash"])} 🐾')
+
+    if cmd == 'removemoney':
+        uid = _uid(); amt = _amt()
+        if not uid: return err('Wybierz użytkownika.')
+        if amt is None or amt <= 0: return err('Podaj poprawną kwotę.')
+        db.ensure_user(uid, guild_id)
+        db.add_cash(uid, guild_id, -amt)
+        w = db.get_wallet(uid, guild_id)
+        return ok(f'-{amt:.0f} 🐾 → gotówka: {int(w["cash"])} 🐾')
+
+    if cmd == 'setmoney':
+        uid = _uid(); amt = _amt()
+        if not uid: return err('Wybierz użytkownika.')
+        if amt is None or amt < 0: return err('Podaj poprawną kwotę.')
+        db.ensure_user(uid, guild_id)
+        with db._lock:
+            with db._get_conn() as conn:
+                conn.execute('UPDATE users SET cash=? WHERE user_id=? AND guild_id=?',
+                             (amt, uid, guild_id))
+                conn.commit()
+        return ok(f'Gotówka ustawiona na {amt:.0f} 🐾')
+
+    # ── MODERATION ────────────────────────────────────────────────────────────
+    if cmd == 'warn':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        db.ensure_user(uid, guild_id)
+        db.add_warning(uid, guild_id, reason=reason, warned_by=0, is_auto=False)
+        db.add_warn_points(uid, guild_id, 0.5, reason=reason, given_by=0)
+        count = db.get_warning_count(uid, guild_id)
+        cfg   = db.get_guild(guild_id) or {}
+        limit = cfg.get('warn_limit', 3)
+        action = ''
+        if count >= limit:
+            db.update_user(uid, guild_id, is_banned=1)
+            _dpost(f'/guilds/{guild_id}/bans/{uid}', {'delete_message_days': 0, 'reason': reason})
+            action = ' | AUTO-BAN wykonany!'
+        elif count == 2:
+            _ddel(f'/guilds/{guild_id}/members/{uid}')
+            action = ' | AUTO-KICK wykonany!'
+        elif count == 1:
+            until = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+            _dpatch(f'/guilds/{guild_id}/members/{uid}',
+                    {'communication_disabled_until': until})
+            action = ' | AUTO-TIMEOUT 1h wykonany!'
+        return ok(f'Ostrzeżono ({count}/{limit}){action}')
+
+    if cmd == 'warnpoints':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        db.ensure_user(uid, guild_id)
+        db.add_warn_points(uid, guild_id, 1.0, reason=reason, given_by=0)
+        u = db.get_user(uid, guild_id)
+        return ok(f'+1 warn point → łącznie: {u.get("warn_points", 0):.1f}')
+
+    if cmd == 'clearwarn':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        n = db.clear_warnings(uid, guild_id)
+        return ok(f'Usunięto {n} ostrzeżeń.')
+
+    if cmd == 'mute':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        if not duration: return err('Podaj czas trwania (np. 1h, 30m).')
+        secs = _parse_dur_seconds(duration)
+        if not secs: return err('Nieprawidłowy czas. Użyj: 10m, 1h, 2d.')
+        if secs > 2419200: return err('Max timeout Discord to 28 dni.')
+        until = (datetime.now(timezone.utc) + timedelta(seconds=secs)).isoformat()
+        data, e2 = _dpatch(f'/guilds/{guild_id}/members/{uid}',
+                           {'communication_disabled_until': until})
+        if e2: return err(f'Discord API: {e2}')
+        return ok(f'Timeout {duration} ustawiony.')
+
+    if cmd == 'unmute':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        data, e2 = _dpatch(f'/guilds/{guild_id}/members/{uid}',
+                           {'communication_disabled_until': None})
+        if e2: return err(f'Discord API: {e2}')
+        return ok('Timeout cofnięty.')
+
+    if cmd == 'kick':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        ok2 = _ddel(f'/guilds/{guild_id}/members/{uid}')
+        if not ok2: return err('Brak uprawnień lub użytkownik nie jest na serwerze.')
+        return ok('Użytkownik wyrzucony z serwera.')
+
+    if cmd == 'discordban':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        data, e2 = _dpost(f'/guilds/{guild_id}/bans/{uid}',
+                          {'delete_message_days': 0, 'reason': reason})
+        # PUT also works for ban
+        if e2:
+            ok3 = _dput(f'/guilds/{guild_id}/bans/{uid}')
+            if not ok3: return err(f'Discord API: {e2}')
+        db.ensure_user(uid, guild_id)
+        db.update_user(uid, guild_id, is_banned=1)
+        return ok('Użytkownik zbanowany na serwerze Discord.')
+
+    if cmd == 'discordunban':
+        try: uid = int(uid_direct)
+        except: return err('Podaj prawidłowe ID użytkownika.')
+        ok3 = _ddel(f'/guilds/{guild_id}/bans/{uid}')
+        if not ok3: return err('Nie można odbanować (brak uprawnień lub użytkownik nie był zbanowany).')
+        return ok(f'Użytkownik {uid} odbanowany.')
+
+    if cmd == 'softban':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        _dpost(f'/guilds/{guild_id}/bans/{uid}',
+               {'delete_message_days': 1, 'reason': f'Softban: {reason}'})
+        import time; time.sleep(0.5)
+        _ddel(f'/guilds/{guild_id}/bans/{uid}')
+        return ok('Soft ban wykonany (wiadomości usunięte, użytkownik może dołączyć ponownie).')
+
+    if cmd == 'purge':
+        if not channel_id: return err('Wybierz kanał.')
+        try: n = max(1, min(100, int(purge_n)))
+        except: n = 10
+        msgs = _dget(f'/channels/{channel_id}/messages?limit={n}') or []
+        if not msgs: return ok('Brak wiadomości do usunięcia.')
+        ids = [m['id'] for m in msgs]
+        if len(ids) == 1:
+            _ddel(f'/channels/{channel_id}/messages/{ids[0]}')
+        else:
+            _dpost(f'/channels/{channel_id}/messages/bulk-delete', {'messages': ids})
+        return ok(f'Usunięto {len(ids)} wiadomości.')
+
+    # ── CHANNELS ──────────────────────────────────────────────────────────────
+    if cmd in ('lock', 'unlock', 'hide', 'unhide'):
+        if not channel_id: return err('Wybierz kanał.')
+        ch_data = _dget(f'/channels/{channel_id}')
+        if not ch_data: return err('Nie można pobrać danych kanału.')
+        overwrites = ch_data.get('permission_overwrites', [])
+        everyone_id = str(guild_id)  # @everyone role has same ID as guild
+        ov = next((o for o in overwrites if o['id'] == everyone_id), None)
+        allow = int(ov['allow']) if ov else 0
+        deny  = int(ov['deny'])  if ov else 0
+        SEND = 1 << 11   # SEND_MESSAGES
+        VIEW = 1 << 10   # VIEW_CHANNEL
+        if cmd == 'lock':
+            deny |= SEND; allow &= ~SEND
+        elif cmd == 'unlock':
+            deny &= ~SEND; allow &= ~SEND
+        elif cmd == 'hide':
+            deny |= VIEW; allow &= ~VIEW
+        elif cmd == 'unhide':
+            deny &= ~VIEW; allow &= ~VIEW
+        new_ov = [o for o in overwrites if o['id'] != everyone_id]
+        new_ov.append({'id': everyone_id, 'type': 0, 'allow': str(allow), 'deny': str(deny)})
+        data2, e2 = _dpatch(f'/channels/{channel_id}', {'permission_overwrites': new_ov})
+        if e2: return err(f'Discord API: {e2}')
+        labels = {'lock': '🔒 zablokowany', 'unlock': '🔓 odblokowany',
+                  'hide': '🙈 ukryty', 'unhide': '👁️ odkryty'}
+        return ok(f'Kanał {labels[cmd]}.')
+
+    if cmd == 'nick':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        new_nick = nick if nick else None
+        data2, e2 = _dpatch(f'/guilds/{guild_id}/members/{uid}', {'nick': new_nick})
+        if e2: return err(f'Discord API: {e2}')
+        return ok(f'Nick {"zresetowany" if not new_nick else f"zmieniony na {new_nick}"}.')
+
+    # ── RANKS ─────────────────────────────────────────────────────────────────
+    if cmd == 'giverank':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        if not rank_id: return err('Wybierz rangę.')
+        rank = db.get_rank_by_id(int(rank_id))
+        if not rank: return err('Ranga nie istnieje.')
+        db.ensure_user(uid, guild_id)
+        if rank.get('is_special') or rank.get('is_owner_only'):
+            ok2 = db.give_special_rank(uid, guild_id, int(rank_id), assigned_by=0, note='Dashboard')
+            if not ok2: return err('Użytkownik już posiada tę rangę.')
+            if rank.get('role_id'):
+                _dput(f'/guilds/{guild_id}/members/{uid}/roles/{rank["role_id"]}')
+        else:
+            req = rank.get('required_points', 0)
+            u = db.get_user(uid, guild_id)
+            old_rank = db.get_user_auto_rank(uid, guild_id)
+            if (u.get('points') or 0) < req:
+                db.set_points(uid, guild_id, req, note=f'Nadanie rangi: {rank["name"]}', assigned_by=0)
+            _sync_auto_rank_role(guild_id, uid, old_rank.get('role_id') if old_rank else None)
+        return ok(f'Ranga {rank["icon"]} {rank["name"]} nadana.')
+
+    if cmd == 'takerank':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        if not rank_id: return err('Wybierz rangę.')
+        rank = db.get_rank_by_id(int(rank_id))
+        if not rank: return err('Ranga nie istnieje.')
+        db.remove_special_rank(uid, guild_id, int(rank_id))
+        if rank.get('role_id'):
+            _ddel(f'/guilds/{guild_id}/members/{uid}/roles/{rank["role_id"]}')
+        return ok(f'Ranga {rank["icon"]} {rank["name"]} odebrana.')
+
+    # ── USER MANAGEMENT ───────────────────────────────────────────────────────
+    if cmd == 'forceclockout':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        db.ensure_user(uid, guild_id)
+        db.clockout_user(uid, guild_id)
+        return ok('Clock-out wymuszony.')
+
+    if cmd == 'resetuser':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        db.reset_user(uid, guild_id)
+        return ok('Dane użytkownika zresetowane.')
+
+    if cmd == 'assignfaction':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        if not faction_id: return err('Wybierz frakcję.')
+        faction = db.get_faction(int(faction_id))
+        if not faction: return err('Frakcja nie istnieje.')
+        db.ensure_user(uid, guild_id)
+        db.assign_faction(uid, guild_id, int(faction_id), assigned_by=0)
+        _sync_faction_discord_roles(guild_id, uid, faction, add=True)
+        return ok(f'Przypisano do frakcji {faction["icon"]} {faction["name"]}.')
+
+    # ── TAGS ──────────────────────────────────────────────────────────────────
+    if cmd == 'tagcreate':
+        if not tag_name: return err('Podaj nazwę tagu.')
+        if not tag_content: return err('Podaj treść tagu.')
+        ok2 = db.create_tag(guild_id, tag_name, tag_content, author_id=0)
+        if not ok2: return err(f'Tag "{tag_name}" już istnieje. Usuń go najpierw.')
+        return ok(f'Tag "{tag_name}" utworzony.')
+
+    if cmd == 'tagdelete':
+        if not tag_name: return err('Podaj nazwę tagu.')
+        ok2 = db.delete_tag(guild_id, tag_name)
+        if not ok2: return err(f'Tag "{tag_name}" nie istnieje.')
+        return ok(f'Tag "{tag_name}" usunięty.')
+
+    # ── ANNOUNCE ──────────────────────────────────────────────────────────────
+    if cmd == 'announce':
+        if not channel_id: return err('Wybierz kanał.')
+        if not announce: return err('Wpisz treść ogłoszenia.')
+        data2, e2 = _dpost(f'/channels/{channel_id}/messages',
+                           {'embeds': [{'description': announce, 'color': 0x7289DA}]})
+        if e2: return err(f'Discord API: {e2}')
+        return ok('Ogłoszenie wysłane.')
+
+    return err(f'Nieznana komenda: {cmd}')
 
 
 # ─── Guild overview ───────────────────────────────────────────────────────────
