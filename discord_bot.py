@@ -1,6 +1,7 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import database as db
+import asyncio
 
 
 class BotMops(commands.Bot):
@@ -43,6 +44,30 @@ class BotMops(commands.Bot):
                 name=".help | System Rang"
             )
         )
+        if not self._reminder_loop.is_running():
+            self._reminder_loop.start()
+
+    @tasks.loop(seconds=30)
+    async def _reminder_loop(self):
+        """Check and fire due reminders every 30 seconds."""
+        try:
+            pending = db.get_pending_reminders()
+            for r in pending:
+                try:
+                    ch = self.get_channel(r['channel_id'])
+                    if ch:
+                        user = self.get_user(r['user_id'])
+                        mention = user.mention if user else f'<@{r["user_id"]}>'
+                        e = discord.Embed(
+                            title='⏰ Przypomnienie!',
+                            description=f'{mention}\n\n**{r["message"]}**',
+                            color=0x43B581)
+                        await ch.send(embed=e)
+                except Exception:
+                    pass
+                db.mark_reminder_done(r['id'])
+        except Exception:
+            pass
 
     async def on_guild_join(self, guild: discord.Guild):
         db.ensure_guild(guild.id)

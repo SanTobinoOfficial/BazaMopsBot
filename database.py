@@ -330,6 +330,31 @@ def _run_migrations(conn):
             content    TEXT    NOT NULL,
             author_id  INTEGER DEFAULT NULL,
             created_at TEXT    DEFAULT (datetime('now')))""",
+        # Extra economy cooldowns
+        "ALTER TABLE users ADD COLUMN fish_last  TEXT DEFAULT NULL",
+        "ALTER TABLE users ADD COLUMN mine_last  TEXT DEFAULT NULL",
+        "ALTER TABLE users ADD COLUMN hunt_last  TEXT DEFAULT NULL",
+        "ALTER TABLE users ADD COLUMN slots_last TEXT DEFAULT NULL",
+        # Tags system
+        """CREATE TABLE IF NOT EXISTS tags (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id   INTEGER NOT NULL,
+            name       TEXT    NOT NULL,
+            content    TEXT    NOT NULL,
+            author_id  INTEGER DEFAULT NULL,
+            uses       INTEGER DEFAULT 0,
+            created_at TEXT    DEFAULT (datetime('now')),
+            UNIQUE(guild_id, name))""",
+        # Reminders
+        """CREATE TABLE IF NOT EXISTS reminders (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER NOT NULL,
+            guild_id   INTEGER NOT NULL,
+            channel_id INTEGER NOT NULL,
+            message    TEXT    NOT NULL,
+            remind_at  TEXT    NOT NULL,
+            done       INTEGER DEFAULT 0,
+            created_at TEXT    DEFAULT (datetime('now')))""",
     ]
     for m in migrations:
         try:
@@ -1873,3 +1898,91 @@ def get_eco_leaderboard(guild_id: int, limit: int = 10) -> List[Dict]:
             'SELECT *, (cash + bank) as total FROM users WHERE guild_id=? AND is_banned=0 '
             'ORDER BY total DESC LIMIT ?', (guild_id, limit)).fetchall()
         return [dict(r) for r in rows]
+
+
+# ─── Tags ─────────────────────────────────────────────────────────────────────
+
+def get_tag(guild_id: int, name: str) -> Optional[Dict]:
+    with _get_conn() as conn:
+        row = conn.execute(
+            'SELECT * FROM tags WHERE guild_id=? AND LOWER(name)=LOWER(?)',
+            (guild_id, name)).fetchone()
+        return dict(row) if row else None
+
+
+def list_tags(guild_id: int) -> List[Dict]:
+    with _get_conn() as conn:
+        rows = conn.execute(
+            'SELECT * FROM tags WHERE guild_id=? ORDER BY name', (guild_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def create_tag(guild_id: int, name: str, content: str, author_id: int) -> bool:
+    try:
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    'INSERT INTO tags (guild_id, name, content, author_id) VALUES (?,?,?,?)',
+                    (guild_id, name.lower(), content, author_id))
+                conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+def update_tag(guild_id: int, name: str, content: str) -> bool:
+    with _lock:
+        with _get_conn() as conn:
+            c = conn.execute(
+                'UPDATE tags SET content=? WHERE guild_id=? AND LOWER(name)=LOWER(?)',
+                (content, guild_id, name))
+            conn.commit()
+            return c.rowcount > 0
+
+
+def delete_tag(guild_id: int, name: str) -> bool:
+    with _lock:
+        with _get_conn() as conn:
+            c = conn.execute(
+                'DELETE FROM tags WHERE guild_id=? AND LOWER(name)=LOWER(?)',
+                (guild_id, name))
+            conn.commit()
+            return c.rowcount > 0
+
+
+def increment_tag_uses(guild_id: int, name: str) -> None:
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute(
+                'UPDATE tags SET uses=uses+1 WHERE guild_id=? AND LOWER(name)=LOWER(?)',
+                (guild_id, name))
+            conn.commit()
+
+
+# ─── Reminders ────────────────────────────────────────────────────────────────
+
+def add_reminder(user_id: int, guild_id: int, channel_id: int,
+                 message: str, remind_at: str) -> int:
+    with _lock:
+        with _get_conn() as conn:
+            cur = conn.execute(
+                'INSERT INTO reminders (user_id, guild_id, channel_id, message, remind_at) '
+                'VALUES (?,?,?,?,?)',
+                (user_id, guild_id, channel_id, message, remind_at))
+            conn.commit()
+            return cur.lastrowid
+
+
+def get_pending_reminders() -> List[Dict]:
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM reminders WHERE done=0 AND remind_at <= datetime('now')"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def mark_reminder_done(reminder_id: int) -> None:
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute('UPDATE reminders SET done=1 WHERE id=?', (reminder_id,))
+            conn.commit()

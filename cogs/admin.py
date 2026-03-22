@@ -101,6 +101,22 @@ class AdminCog(commands.Cog):
             'takejob':            self._cmd_takejob,
             'setjobchannel':      self._cmd_setjobchannel,
             'jobpanel':           self._cmd_jobpanel,
+            # Channel management (Dyno/ProBot/Carl-bot)
+            'lock':               self._cmd_lock,
+            'unlock':             self._cmd_unlock,
+            'hide':               self._cmd_hide,
+            'unhide':             self._cmd_unhide,
+            'announce':           self._cmd_announce,
+            # User management (Dyno)
+            'nick':               self._cmd_nick,
+            'move':               self._cmd_move,
+            'deafen':             self._cmd_deafen,
+            'undeafen':           self._cmd_undeafen,
+            # Tags (Carl-bot)
+            'tag':                self._cmd_tag_admin,
+            'tagcreate':          self._cmd_tag_admin,
+            'tagdelete':          self._cmd_tag_admin,
+            'tagedit':            self._cmd_tag_admin,
         }
 
     # ── Permission helpers ────────────────────────────────────────────────────
@@ -1891,6 +1907,245 @@ class AdminCog(commands.Cog):
                 conn.commit()
         await msg.reply(embed=_ok(f'Ustawiono portfel **{m.display_name}** na **{amount:.0f}** 🐾.'),
                         mention_author=False)
+
+
+    # ── Channel Management (Dyno / ProBot style) ─────────────────────────────
+
+    async def _cmd_lock(self, msg, args):
+        """Lock a channel – remove @everyone's ability to send messages."""
+        ch = msg.channel
+        if args:
+            cid = args[0].strip('<#>').strip()
+            try:
+                ch = msg.guild.get_channel(int(cid)) or ch
+            except ValueError:
+                pass
+        overwrite = ch.overwrites_for(msg.guild.default_role)
+        overwrite.send_messages = False
+        try:
+            await ch.set_permissions(msg.guild.default_role, overwrite=overwrite,
+                                     reason=f'Zablokowany przez {msg.author}')
+            await msg.reply(embed=_ok(f'🔒 Kanał {ch.mention} zablokowany.'), mention_author=False)
+            await send_log(msg.guild, log_embed('🔒 Kanał zablokowany', RED,
+                Kanał=ch.mention, Przez=msg.author.mention))
+        except discord.Forbidden:
+            await msg.reply(embed=_err('Brak uprawnień.'), mention_author=False)
+
+    async def _cmd_unlock(self, msg, args):
+        """Unlock a channel – restore @everyone send messages."""
+        ch = msg.channel
+        if args:
+            cid = args[0].strip('<#>').strip()
+            try:
+                ch = msg.guild.get_channel(int(cid)) or ch
+            except ValueError:
+                pass
+        overwrite = ch.overwrites_for(msg.guild.default_role)
+        overwrite.send_messages = None
+        try:
+            await ch.set_permissions(msg.guild.default_role, overwrite=overwrite,
+                                     reason=f'Odblokowany przez {msg.author}')
+            await msg.reply(embed=_ok(f'🔓 Kanał {ch.mention} odblokowany.'), mention_author=False)
+            await send_log(msg.guild, log_embed('🔓 Kanał odblokowany', GREEN,
+                Kanał=ch.mention, Przez=msg.author.mention))
+        except discord.Forbidden:
+            await msg.reply(embed=_err('Brak uprawnień.'), mention_author=False)
+
+    async def _cmd_hide(self, msg, args):
+        """Hide a channel from @everyone."""
+        ch = msg.channel
+        if args:
+            cid = args[0].strip('<#>').strip()
+            try:
+                ch = msg.guild.get_channel(int(cid)) or ch
+            except ValueError:
+                pass
+        overwrite = ch.overwrites_for(msg.guild.default_role)
+        overwrite.view_channel = False
+        try:
+            await ch.set_permissions(msg.guild.default_role, overwrite=overwrite,
+                                     reason=f'Ukryty przez {msg.author}')
+            await msg.reply(embed=_ok(f'🙈 Kanał {ch.mention} ukryty.'), mention_author=False)
+        except discord.Forbidden:
+            await msg.reply(embed=_err('Brak uprawnień.'), mention_author=False)
+
+    async def _cmd_unhide(self, msg, args):
+        """Unhide a channel for @everyone."""
+        ch = msg.channel
+        if args:
+            cid = args[0].strip('<#>').strip()
+            try:
+                ch = msg.guild.get_channel(int(cid)) or ch
+            except ValueError:
+                pass
+        overwrite = ch.overwrites_for(msg.guild.default_role)
+        overwrite.view_channel = None
+        try:
+            await ch.set_permissions(msg.guild.default_role, overwrite=overwrite,
+                                     reason=f'Odkryty przez {msg.author}')
+            await msg.reply(embed=_ok(f'👁️ Kanał {ch.mention} odkryty.'), mention_author=False)
+        except discord.Forbidden:
+            await msg.reply(embed=_err('Brak uprawnień.'), mention_author=False)
+
+    async def _cmd_announce(self, msg, args):
+        """.announce #channel <treść>"""
+        if len(args) < 2:
+            await msg.reply(embed=_err('`.announce #kanał <treść>`'), mention_author=False); return
+        cid = args[0].strip('<#>').strip()
+        try:
+            ch = msg.guild.get_channel(int(cid))
+        except ValueError:
+            ch = None
+        if not ch:
+            await msg.reply(embed=_err('Nie znaleziono kanału.'), mention_author=False); return
+        content = ' '.join(args[1:])
+        e = discord.Embed(description=content, color=BLURPLE, timestamp=datetime.now())
+        e.set_author(name=msg.guild.name, icon_url=msg.guild.icon.url if msg.guild.icon else None)
+        e.set_footer(text=f'Ogłoszenie przez {msg.author.display_name}')
+        try:
+            await ch.send(embed=e)
+            await msg.reply(embed=_ok(f'Ogłoszenie wysłane do {ch.mention}.'), mention_author=False)
+        except discord.Forbidden:
+            await msg.reply(embed=_err('Brak uprawnień do wysłania na ten kanał.'), mention_author=False)
+
+    # ── User management extras (Dyno) ─────────────────────────────────────────
+
+    async def _cmd_nick(self, msg, args):
+        """.nick @user <nowy nick> | .nick @user reset"""
+        if len(args) < 2:
+            await msg.reply(embed=_err('`.nick @user <nowy nick>` lub `.nick @user reset`'),
+                            mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        new_nick = None if args[1].lower() == 'reset' else ' '.join(args[1:])
+        try:
+            await m.edit(nick=new_nick, reason=f'Nick zmieniony przez {msg.author}')
+            if new_nick:
+                await msg.reply(embed=_ok(f'Nick **{m.display_name}** zmieniony na **{new_nick}**.'),
+                                mention_author=False)
+            else:
+                await msg.reply(embed=_ok(f'Nick **{m.name}** zresetowany.'), mention_author=False)
+        except discord.Forbidden:
+            await msg.reply(embed=_err('Brak uprawnień do zmiany nicku.'), mention_author=False)
+
+    async def _cmd_move(self, msg, args):
+        """.move @user #voice_channel"""
+        if len(args) < 2:
+            await msg.reply(embed=_err('`.move @user #kanał_głosowy`'), mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        cid = args[1].strip('<#>').strip()
+        try:
+            ch = msg.guild.get_channel(int(cid))
+        except ValueError:
+            ch = None
+        if not ch or not isinstance(ch, discord.VoiceChannel):
+            await msg.reply(embed=_err('Podaj poprawny kanał głosowy.'), mention_author=False); return
+        if not m.voice:
+            await msg.reply(embed=_err(f'**{m.display_name}** nie jest na żadnym kanale głosowym.'),
+                            mention_author=False); return
+        try:
+            await m.move_to(ch, reason=f'Przeniesiony przez {msg.author}')
+            await msg.reply(embed=_ok(f'**{m.display_name}** przeniesiony do **{ch.name}**.'),
+                            mention_author=False)
+        except discord.Forbidden:
+            await msg.reply(embed=_err('Brak uprawnień.'), mention_author=False)
+
+    async def _cmd_deafen(self, msg, args):
+        """.deafen @user"""
+        if not args:
+            await msg.reply(embed=_err('`.deafen @user`'), mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        try:
+            await m.edit(deafen=True, reason=f'Deafen przez {msg.author}')
+            await msg.reply(embed=_ok(f'**{m.display_name}** ogłuszony (server deafen).'),
+                            mention_author=False)
+        except discord.Forbidden:
+            await msg.reply(embed=_err('Brak uprawnień.'), mention_author=False)
+
+    async def _cmd_undeafen(self, msg, args):
+        """.undeafen @user"""
+        if not args:
+            await msg.reply(embed=_err('`.undeafen @user`'), mention_author=False); return
+        m = self._resolve_member(msg, args[0])
+        if not m:
+            await msg.reply(embed=_err('Nie znaleziono użytkownika.'), mention_author=False); return
+        try:
+            await m.edit(deafen=False, reason=f'Undeafen przez {msg.author}')
+            await msg.reply(embed=_ok(f'**{m.display_name}** odogłuszony.'), mention_author=False)
+        except discord.Forbidden:
+            await msg.reply(embed=_err('Brak uprawnień.'), mention_author=False)
+
+    # ── Tags (Carl-bot style) ─────────────────────────────────────────────────
+
+    async def _cmd_tag_admin(self, msg, args):
+        """.tag create <name> <content> | .tag edit <name> <content> | .tag delete <name>"""
+        # Route: if cmd is tagcreate/tagdelete/tagedit inject first arg
+        cmd = msg.content[1:].strip().split()[0].lower()
+        if cmd in ('tagcreate',):
+            args = ['create'] + list(args)
+        elif cmd in ('tagdelete',):
+            args = ['delete'] + list(args)
+        elif cmd in ('tagedit',):
+            args = ['edit'] + list(args)
+
+        if not args:
+            await msg.reply(embed=_err(
+                '`.tag create <nazwa> <treść>`\n'
+                '`.tag edit <nazwa> <treść>`\n'
+                '`.tag delete <nazwa>`\n'
+                '`.tag list` – lista tagów'
+            ), mention_author=False); return
+
+        sub = args[0].lower()
+
+        if sub == 'create':
+            if len(args) < 3:
+                await msg.reply(embed=_err('`.tag create <nazwa> <treść>`'), mention_author=False); return
+            name = args[1].lower()
+            content = ' '.join(args[2:])
+            ok = db.create_tag(msg.guild.id, name, content, msg.author.id)
+            if not ok:
+                await msg.reply(embed=_err(f'Tag **{name}** już istnieje. Użyj `.tag edit`.'),
+                                mention_author=False); return
+            await msg.reply(embed=_ok(f'Tag **{name}** utworzony.'), mention_author=False)
+
+        elif sub == 'edit':
+            if len(args) < 3:
+                await msg.reply(embed=_err('`.tag edit <nazwa> <treść>`'), mention_author=False); return
+            name = args[1].lower()
+            content = ' '.join(args[2:])
+            ok = db.update_tag(msg.guild.id, name, content)
+            if not ok:
+                await msg.reply(embed=_err(f'Tag **{name}** nie istnieje.'), mention_author=False); return
+            await msg.reply(embed=_ok(f'Tag **{name}** zaktualizowany.'), mention_author=False)
+
+        elif sub == 'delete':
+            if len(args) < 2:
+                await msg.reply(embed=_err('`.tag delete <nazwa>`'), mention_author=False); return
+            name = args[1].lower()
+            ok = db.delete_tag(msg.guild.id, name)
+            if not ok:
+                await msg.reply(embed=_err(f'Tag **{name}** nie istnieje.'), mention_author=False); return
+            await msg.reply(embed=_ok(f'Tag **{name}** usunięty.'), mention_author=False)
+
+        elif sub == 'list':
+            tags = db.list_tags(msg.guild.id)
+            if not tags:
+                await msg.reply(embed=discord.Embed(description='📭 Brak tagów.', color=YELLOW),
+                                mention_author=False); return
+            e = discord.Embed(title='🏷️ Lista Tagów', color=BLURPLE)
+            e.description = ' '.join(f'`{t["name"]}`' for t in tags)
+            await msg.reply(embed=e, mention_author=False)
+
+        else:
+            await msg.reply(embed=_err(
+                '`.tag create <nazwa> <treść>` | `.tag edit <nazwa> <treść>` | `.tag delete <nazwa>` | `.tag list`'
+            ), mention_author=False)
 
 
 async def setup(bot: commands.Bot):

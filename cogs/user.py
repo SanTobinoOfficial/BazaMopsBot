@@ -154,6 +154,34 @@ class UserCog(commands.Cog):
             'ankieta':     self._cmd_poll,
             'trivia':      self._cmd_trivia,
             'quiz':        self._cmd_trivia,
+            # Ekonomia – minigry (Tatsu/Dank Memer)
+            'slots':       self._cmd_slots,
+            'fish':        self._cmd_fish,
+            'mine':        self._cmd_mine,
+            'hunt':        self._cmd_hunt,
+            # Fun – social (Tatsu)
+            'hug':         self._cmd_hug,
+            'pat':         self._cmd_pat,
+            'slap':        self._cmd_slap,
+            'gg':          self._cmd_gg,
+            # Fun – misc
+            'joke':        self._cmd_joke,
+            'quote':       self._cmd_quote,
+            'owo':         self._cmd_owo,
+            'uwu':         self._cmd_owo,
+            # Utility (MEE6/Carl-bot)
+            'ping':        self._cmd_ping,
+            'uptime':      self._cmd_uptime,
+            'remindme':    self._cmd_remindme,
+            'remind':      self._cmd_remindme,
+            # Tags (Carl-bot) – read-only for users
+            'tag':         self._cmd_tag,
+            'taglist':     self._cmd_taglist,
+            # Info
+            'roleinfo':    self._cmd_roleinfo,
+            'ri':          self._cmd_roleinfo,
+            # Level alias (MEE6)
+            'level':       self._cmd_rank,
         }
 
     def _resolve_member(self, msg, arg):
@@ -838,14 +866,33 @@ class UserCog(commands.Cog):
         e.add_field(name=f'{COIN} Ekonomia', inline=False,
                     value='\n'.join(eco_lines) or '*Brak*')
 
+        # Minigry
+        mini_user = [
+            ('slots', f'`.slots [stawka]`',  f'automat {COIN} (cooldown 2min)'),
+            ('fish',  f'`.fish`',            f'wędkowanie {COIN} (45min)'),
+            ('mine',  f'`.mine`',            f'kopalnia {COIN} (1h)'),
+            ('hunt',  f'`.hunt`',            f'polowanie {COIN} (1h)'),
+        ]
+        mini_lines = [f'{s} – {d}' for cmd, s, d in mini_user if _user_perm(cmd)]
+        e.add_field(name='🎰 Minigry', inline=False,
+                    value='\n'.join(mini_lines) or '*Brak*')
+
         # Fun
         fun_user = [
             ('8ball',      '`.8ball <pytanie>`',          'wróżba'),
             ('coinflip',   '`.coinflip`',                 'orzeł czy reszka'),
             ('roll',       '`.roll [Nd][K]`',             'rzuć kością (np. 2d6)'),
             ('choose',     '`.choose op1 op2 op3`',       'wybierz losowo'),
+            ('joke',       '`.joke`',                     'losowy dowcip'),
+            ('quote',      '`.quote`',                    'losowy cytat'),
+            ('owo',        '`.owo <tekst>`',              'owifikacja tekstu'),
+            ('hug',        '`.hug [@user]`',              'przytul kogoś'),
+            ('pat',        '`.pat [@user]`',              'pogłaszcz kogoś'),
+            ('slap',       '`.slap [@user]`',             'daj liścia'),
+            ('gg',         '`.gg [@user]`',               'pogratuluj'),
             ('avatar',     '`.avatar [@user]`',           'pokaż avatar'),
             ('serverinfo', '`.serverinfo`',               'info o serwerze'),
+            ('roleinfo',   '`.roleinfo @rola`',           'info o roli'),
             ('rep',        '`.rep @user`',                'daj punkt reputacji (24h)'),
             ('poll',       '`.poll <pytanie>`',           'utwórz ankietę'),
             ('trivia',     '`.trivia`',                   'losowe pytanie quizowe'),
@@ -853,6 +900,18 @@ class UserCog(commands.Cog):
         fun_lines = [f'{s} – {d}' for cmd, s, d in fun_user if _user_perm(cmd)]
         e.add_field(name='🎮 Fun', inline=False,
                     value='\n'.join(fun_lines) or '*Brak*')
+
+        # Utility
+        util_user = [
+            ('ping',      '`.ping`',                   'latencja bota'),
+            ('uptime',    '`.uptime`',                 'czas działania bota'),
+            ('remindme',  '`.remindme <czas> <tekst>`','ustaw przypomnienie'),
+            ('tag',       '`.tag <nazwa>`',            'wyświetl tag serwera'),
+            ('taglist',   '`.taglist`',                'lista tagów serwera'),
+        ]
+        util_lines = [f'{s} – {d}' for cmd, s, d in util_user if _user_perm(cmd)]
+        e.add_field(name='🔧 Narzędzia', inline=False,
+                    value='\n'.join(util_lines) or '*Brak*')
 
         e.add_field(name='ℹ️ Inne', value='`.help` – ta wiadomość', inline=False)
 
@@ -927,6 +986,402 @@ class UserCog(commands.Cog):
         e.add_field(name='🔨 Admin – Setup',
                     value='`.setchannel` `.setpoints_h` `.adminrole` `.setwarnlimit` `.setmaxhours`',
                     inline=False)
+
+        chan_defs = [
+            ('lock',     '`.lock [#ch]`'),
+            ('unlock',   '`.unlock [#ch]`'),
+            ('hide',     '`.hide [#ch]`'),
+            ('unhide',   '`.unhide [#ch]`'),
+            ('announce', '`.announce #ch <tekst>`'),
+            ('nick',     '`.nick @u <nick|reset>`'),
+            ('move',     '`.move @u #voice`'),
+            ('deafen',   '`.deafen @u`'),
+            ('undeafen', '`.undeafen @u`'),
+        ]
+        chan_lines = [s for cmd, s in chan_defs if _admin_perm(cmd)]
+        if chan_lines:
+            e.add_field(name='🔨 Admin – Kanały i głos', inline=False,
+                        value='  '.join(chan_lines))
+
+        tag_defs = [('tag', '`.tag create/edit/delete/list <nazwa> [treść]`')]
+        tag_lines = [s for cmd, s in tag_defs if _admin_perm(cmd)]
+        if tag_lines:
+            e.add_field(name='🏷️ Admin – Tagi', inline=False, value='  '.join(tag_lines))
+
+        await msg.reply(embed=e, mention_author=False)
+
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # MINIGRY EKONOMICZNE (Tatsu / Dank Memer style)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    async def _cmd_slots(self, msg, args):
+        """Slot machine – opcjonalnie postaw mopsy."""
+        u = db.get_user(msg.author.id, msg.guild.id)
+        cd = _check_cooldown(u.get('slots_last'), 2)  # 2min
+        if cd:
+            await msg.reply(embed=discord.Embed(
+                description=f'⏳ Automat w serwisie! Wróć za **{_fmt_cd(cd)}**.', color=RED),
+                mention_author=False); return
+
+        bet = 0
+        if args and args[0].isdigit():
+            bet = int(args[0])
+            w = db.get_wallet(msg.author.id, msg.guild.id)
+            if bet < 10:
+                await msg.reply(embed=discord.Embed(description='❌ Minimalna stawka to **10** 🐾.', color=RED),
+                                mention_author=False); return
+            if w['cash'] < bet:
+                await msg.reply(embed=discord.Embed(
+                    description=f'❌ Nie masz tyle! Masz **{int(w["cash"])}** 🐾.', color=RED),
+                    mention_author=False); return
+            db.add_cash(msg.author.id, msg.guild.id, -bet)
+
+        SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '⭐', '💎']
+        WEIGHTS  = [30,   25,   20,   15,   7,    3  ]
+        reels = random.choices(SYMBOLS, weights=WEIGHTS, k=3)
+
+        if reels[0] == reels[1] == reels[2]:
+            symbol = reels[0]
+            mults = {'💎': 20, '⭐': 10, '🍇': 6, '🍊': 4, '🍋': 3, '🍒': 2}
+            mult = mults.get(symbol, 2)
+            if bet:
+                win = bet * mult
+                db.add_cash(msg.author.id, msg.guild.id, win)
+                result_text = f'🎉 **JACKPOT!** {symbol}{symbol}{symbol} × {mult}\n+{_fmt_money(win)}'
+                color = GOLD
+            else:
+                result_text = f'🎉 **JACKPOT!** {symbol}{symbol}{symbol}'
+                color = GOLD
+        elif reels[0] == reels[1] or reels[1] == reels[2]:
+            if bet:
+                win = bet
+                db.add_cash(msg.author.id, msg.guild.id, win)
+                result_text = f'✅ Dwa takie same! {" ".join(reels)}\nOdzyskujesz {_fmt_money(win)}'
+                color = GREEN
+            else:
+                result_text = f'✅ Dwa takie same! {" ".join(reels)}'
+                color = GREEN
+        else:
+            result_text = f'💸 Nic. {" ".join(reels)}'
+            color = RED
+            if bet:
+                result_text += f'\nStrata: {_fmt_money(bet)}'
+
+        db.set_cooldown(msg.author.id, msg.guild.id, 'slots_last')
+        e = discord.Embed(title='🎰 Automat', description=result_text, color=color)
+        if bet:
+            w2 = db.get_wallet(msg.author.id, msg.guild.id)
+            e.set_footer(text=f'Gotówka: {int(w2["cash"])} 🐾 | Cooldown: 2 min')
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_fish(self, msg, args):
+        u = db.get_user(msg.author.id, msg.guild.id)
+        cd = _check_cooldown(u.get('fish_last'), 45)  # 45min
+        if cd:
+            await msg.reply(embed=discord.Embed(
+                description=f'⏳ Ryby jeszcze nie wróciły! Wróć za **{_fmt_cd(cd)}**.', color=RED),
+                mention_author=False); return
+        catches = [
+            ('🐟 Śledź', 5, 20), ('🐠 Rybka tropikalna', 15, 40),
+            ('🐡 Ryba rozdymka', 20, 50), ('🦈 Rekin', 80, 150),
+            ('🐙 Ośmiornica', 50, 100), ('🦞 Homar', 60, 120),
+            ('🐚 Muszla', 2, 10), ('👢 Stary but', 0, 0),
+            ('💎 Skarb zatopiony', 200, 350),
+        ]
+        weights = [25, 20, 15, 5, 10, 8, 10, 5, 2]
+        name, mn, mx = random.choices(catches, weights=weights, k=1)[0]
+        reward = random.randint(mn, mx) if mx > 0 else 0
+        db.add_cash(msg.author.id, msg.guild.id, reward)
+        db.set_cooldown(msg.author.id, msg.guild.id, 'fish_last')
+        w = db.get_wallet(msg.author.id, msg.guild.id)
+        if reward > 0:
+            e = discord.Embed(title='🎣 Wędkowanie', color=BLURPLE)
+            e.description = f'Złowiłeś **{name}**!\nZarobiłeś {_fmt_money(reward)}.'
+        else:
+            e = discord.Embed(title='🎣 Wędkowanie', color=ORANGE)
+            e.description = f'Wyciągnąłeś **{name}**... Nic nie zarobisz tym razem.'
+        e.set_footer(text=f'Gotówka: {int(w["cash"])} 🐾 | Cooldown: 45 min')
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_mine(self, msg, args):
+        u = db.get_user(msg.author.id, msg.guild.id)
+        cd = _check_cooldown(u.get('mine_last'), 60)  # 1h
+        if cd:
+            await msg.reply(embed=discord.Embed(
+                description=f'⏳ Jesteś zmęczony kopaniem! Wróć za **{_fmt_cd(cd)}**.', color=RED),
+                mention_author=False); return
+        finds = [
+            ('⛏️ Kamień', 1, 5), ('🪨 Skała', 2, 8),
+            ('🪵 Drewno (znalazłeś w kopalni?)', 5, 15),
+            ('🔩 Żelazo', 15, 35), ('🥈 Srebro', 30, 60),
+            ('🥇 Złoto', 60, 100), ('💎 Diament', 150, 300),
+            ('💣 Dynamit (eksplodował)', 0, 0),
+        ]
+        weights = [20, 18, 10, 20, 15, 10, 5, 2]
+        name, mn, mx = random.choices(finds, weights=weights, k=1)[0]
+        reward = random.randint(mn, mx) if mx > 0 else 0
+        db.add_cash(msg.author.id, msg.guild.id, reward)
+        db.set_cooldown(msg.author.id, msg.guild.id, 'mine_last')
+        w = db.get_wallet(msg.author.id, msg.guild.id)
+        if reward > 0:
+            e = discord.Embed(title='⛏️ Kopalnia', color=ORANGE)
+            e.description = f'Wykopałeś **{name}**!\nZarobiłeś {_fmt_money(reward)}.'
+        else:
+            e = discord.Embed(title='⛏️ Kopalnia', color=RED)
+            e.description = f'Trafiłeś na **{name}**... Nic nie zarobiłeś.'
+        e.set_footer(text=f'Gotówka: {int(w["cash"])} 🐾 | Cooldown: 1h')
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_hunt(self, msg, args):
+        u = db.get_user(msg.author.id, msg.guild.id)
+        cd = _check_cooldown(u.get('hunt_last'), 60)  # 1h
+        if cd:
+            await msg.reply(embed=discord.Embed(
+                description=f'⏳ Zwierzęta się schowały! Wróć za **{_fmt_cd(cd)}**.', color=RED),
+                mention_author=False); return
+        prey = [
+            ('🐇 Królik', 10, 25), ('🦆 Kaczka', 15, 35),
+            ('🦊 Lis', 30, 55), ('🐗 Dzik', 40, 70),
+            ('🦌 Jeleń', 60, 100), ('🐻 Niedźwiedź', 100, 180),
+            ('🦁 Lew (jak to możliwe?)', 200, 350),
+            ('💨 Nic nie trafiłeś', 0, 0),
+        ]
+        weights = [20, 18, 15, 15, 12, 8, 2, 10]
+        name, mn, mx = random.choices(prey, weights=weights, k=1)[0]
+        reward = random.randint(mn, mx) if mx > 0 else 0
+        db.add_cash(msg.author.id, msg.guild.id, reward)
+        db.set_cooldown(msg.author.id, msg.guild.id, 'hunt_last')
+        w = db.get_wallet(msg.author.id, msg.guild.id)
+        if reward > 0:
+            e = discord.Embed(title='🏹 Polowanie', color=GREEN)
+            e.description = f'Upolowałeś **{name}**!\nZarobiłeś {_fmt_money(reward)}.'
+        else:
+            e = discord.Embed(title='🏹 Polowanie', color=ORANGE)
+            e.description = '💨 Chybiłeś. Wszystkie zwierzęta uciekły.'
+        e.set_footer(text=f'Gotówka: {int(w["cash"])} 🐾 | Cooldown: 1h')
+        await msg.reply(embed=e, mention_author=False)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SOCIAL / FUN (Tatsu style)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    async def _cmd_hug(self, msg, args):
+        target = self._resolve_member(msg, args[0]) if args else None
+        GIFS = [
+            'https://media.giphy.com/media/od5H3PmEG5EVq/giphy.gif',
+            'https://media.giphy.com/media/lrr9rHuoJOE0w/giphy.gif',
+            'https://media.giphy.com/media/3bqtLDeiDtwhq/giphy.gif',
+        ]
+        e = discord.Embed(color=PURPLE)
+        if target:
+            e.description = f'**{msg.author.display_name}** przytula **{target.display_name}**! 🤗'
+        else:
+            e.description = f'**{msg.author.display_name}** daje wszystkim buziaka! 🤗'
+        e.set_image(url=random.choice(GIFS))
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_pat(self, msg, args):
+        target = self._resolve_member(msg, args[0]) if args else None
+        GIFS = [
+            'https://media.giphy.com/media/L2z7dnOduqEow/giphy.gif',
+            'https://media.giphy.com/media/109ltuoSQT212w/giphy.gif',
+        ]
+        e = discord.Embed(color=PURPLE)
+        if target:
+            e.description = f'**{msg.author.display_name}** głaszcze **{target.display_name}**! 👋'
+        else:
+            e.description = f'**{msg.author.display_name}** głaszcze powietrze... 👋'
+        e.set_image(url=random.choice(GIFS))
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_slap(self, msg, args):
+        target = self._resolve_member(msg, args[0]) if args else None
+        e = discord.Embed(color=RED)
+        if target:
+            e.description = f'**{msg.author.display_name}** daje liścia **{target.display_name}**! 👋😤'
+        else:
+            e.description = f'**{msg.author.display_name}** macha ręką w powietrzu... 👋'
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_gg(self, msg, args):
+        target = self._resolve_member(msg, args[0]) if args else None
+        e = discord.Embed(color=GOLD)
+        if target:
+            e.description = f'🎉 **GG!** Gratulacje dla **{target.display_name}**! Tak trzymaj! 🏆'
+        else:
+            e.description = f'🎉 **GG!** Dobra robota, **{msg.author.display_name}**!'
+        await msg.reply(embed=e, mention_author=False)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # MISC FUN
+    # ══════════════════════════════════════════════════════════════════════════
+
+    JOKES = [
+        ('Dlaczego programista nie wyszedł z domu?', 'Bo nie miał okna (Windows).'),
+        ('Co mówi NULL do wartości?', '"Mam cię za nic."'),
+        ('Ile programistów potrzeba żeby zmienić żarówkę?', 'Żadnego – to problem sprzętowy.'),
+        ('Dlaczego kot siedzi na klawiaturze?', 'Bo chce być close to the mouse.'),
+        ('Dlaczego ryba nie ma laptopa?', 'Bo boi się sieci.'),
+        ('Co powiedział ocean do plaży?', 'Nic, tylko pomachał.'),
+        ('Dlaczego krowa nosi dzwonek?', 'Bo rogi nie grają.'),
+        ('Ile kosztuje brak zainteresowania?', 'Nie wiem, mnie to nie interesuje.'),
+        ('Co jest szybsze: ciepło czy zimno?', 'Ciepło. Zimno można złapać.'),
+        ('Dlaczego ludzie piją kawę?', 'Bo herbata nie budzi tyle kontrowersji.'),
+    ]
+
+    QUOTES = [
+        ('Nie ważne jak wolno idziesz, ważne że się nie zatrzymujesz.', 'Konfucjusz'),
+        ('Sukces to suma małych wysiłków powtarzanych dzień po dniu.', 'Robert Collier'),
+        ('Jedyna droga do dobrej roboty to kochać to co się robi.', 'Steve Jobs'),
+        ('Wszystko wydaje się niemożliwe dopóki nie zostanie zrobione.', 'Nelson Mandela'),
+        ('Każdy ekspert był kiedyś nowicjuszem.', 'Helen Hayes'),
+        ('Mów mało, rób dużo.', 'Benjamin Franklin'),
+        ('Życie jest zbyt krótkie żeby nie próbować.', 'Nieznany'),
+        ('Wiedza mówi, mądrość słucha.', 'Jimi Hendrix'),
+        ('Nie odkładaj na jutro tego co możesz zrobić pojutrze.', 'Mark Twain'),
+        ('Im ciężej pracujesz, tym więcej szczęścia masz.', 'Thomas Jefferson'),
+    ]
+
+    async def _cmd_joke(self, msg, args):
+        setup_line, punchline = random.choice(self.JOKES)
+        e = discord.Embed(title='😂 Dowcip', color=GOLD)
+        e.add_field(name='❓', value=setup_line, inline=False)
+        e.add_field(name='💬', value=f'||{punchline}||', inline=False)
+        e.set_footer(text='Kliknij aby zobaczyć odpowiedź!')
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_quote(self, msg, args):
+        text, author = random.choice(self.QUOTES)
+        e = discord.Embed(
+            description=f'*„{text}"*\n\n— **{author}**',
+            color=PURPLE)
+        e.set_footer(text='💭 Cytat dnia')
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_owo(self, msg, args):
+        if not args:
+            await msg.reply(embed=discord.Embed(description='❌ `.owo <tekst>`', color=RED),
+                            mention_author=False); return
+        text = ' '.join(args)
+        def owify(t):
+            t = t.replace('r', 'w').replace('l', 'w')
+            t = t.replace('R', 'W').replace('L', 'W')
+            faces = [' owo', ' uwu', ' >w<', ' ^-^', ' nya~']
+            return t + random.choice(faces)
+        e = discord.Embed(description=owify(text), color=PURPLE)
+        await msg.reply(embed=e, mention_author=False)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # UTILITY (MEE6 / Carl-bot)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    _start_time = datetime.now()
+
+    async def _cmd_ping(self, msg, args):
+        latency = round(self.bot.latency * 1000)
+        color = GREEN if latency < 100 else (YELLOW if latency < 200 else RED)
+        e = discord.Embed(title='🏓 Pong!', color=color)
+        e.add_field(name='Latencja', value=f'**{latency}ms**', inline=True)
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_uptime(self, msg, args):
+        delta = datetime.now() - UserCog._start_time
+        h, rem = divmod(int(delta.total_seconds()), 3600)
+        m, s = divmod(rem, 60)
+        d, h = divmod(h, 24)
+        parts = []
+        if d: parts.append(f'{d}d')
+        if h: parts.append(f'{h}h')
+        if m: parts.append(f'{m}m')
+        parts.append(f'{s}s')
+        e = discord.Embed(title='⏱️ Uptime', color=GREEN)
+        e.description = f'Bot działa od: **{" ".join(parts)}**'
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_remindme(self, msg, args):
+        """.remindme <czas> <wiadomość>  np. .remindme 1h30m sprawdź piekarnik"""
+        if len(args) < 2:
+            await msg.reply(embed=discord.Embed(
+                description='❌ `.remindme <czas> <wiadomość>`\nPrzykład: `.remindme 1h30m sprawdź piekarnik`',
+                color=RED), mention_author=False); return
+
+        from cogs.admin import _parse_duration
+        td = _parse_duration(args[0])
+        if not td or td.total_seconds() < 10:
+            await msg.reply(embed=discord.Embed(
+                description='❌ Nieprawidłowy czas. Użyj formatu `1h`, `30m`, `1h30m`, `2d`.', color=RED),
+                mention_author=False); return
+        if td.total_seconds() > 60 * 60 * 24 * 30:
+            await msg.reply(embed=discord.Embed(
+                description='❌ Maksymalny czas przypomnienia to 30 dni.', color=RED),
+                mention_author=False); return
+
+        reminder_text = ' '.join(args[1:])
+        remind_at = (datetime.now() + td).isoformat()
+        rid = db.add_reminder(msg.author.id, msg.guild.id, msg.channel.id, reminder_text, remind_at)
+        human_time = (datetime.now() + td).strftime('%d.%m.%Y o %H:%M')
+        e = discord.Embed(title='⏰ Przypomnienie ustawione!', color=GREEN)
+        e.description = f'Przypomnę ci: **{reminder_text}**'
+        e.add_field(name='🕐 Kiedy', value=human_time)
+        e.set_footer(text=f'ID: {rid}')
+        await msg.reply(embed=e, mention_author=False)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # TAGS (Carl-bot style) – read for all users
+    # ══════════════════════════════════════════════════════════════════════════
+
+    async def _cmd_tag(self, msg, args):
+        if not args:
+            await msg.reply(embed=discord.Embed(
+                description='❌ `.tag <nazwa>` – użyj `.taglist` żeby zobaczyć dostępne tagi.',
+                color=RED), mention_author=False); return
+        name = args[0].lower()
+        tag = db.get_tag(msg.guild.id, name)
+        if not tag:
+            await msg.reply(embed=discord.Embed(
+                description=f'❌ Tag **{name}** nie istnieje. Użyj `.taglist`.', color=RED),
+                mention_author=False); return
+        db.increment_tag_uses(msg.guild.id, name)
+        await msg.channel.send(tag['content'])
+
+    async def _cmd_taglist(self, msg, args):
+        tags = db.list_tags(msg.guild.id)
+        if not tags:
+            await msg.reply(embed=discord.Embed(description='📭 Brak tagów na tym serwerze.', color=YELLOW),
+                            mention_author=False); return
+        e = discord.Embed(title='🏷️ Tagi serwera', color=BLURPLE)
+        lines = [f'`{t["name"]}`  — użyto {t["uses"]}×' for t in tags]
+        e.description = '\n'.join(lines) or '*brak*'
+        e.set_footer(text='Użyj .tag <nazwa> żeby wyświetlić tag')
+        await msg.reply(embed=e, mention_author=False)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # ROLE INFO
+    # ══════════════════════════════════════════════════════════════════════════
+
+    async def _cmd_roleinfo(self, msg, args):
+        if not args:
+            await msg.reply(embed=discord.Embed(description='❌ `.roleinfo @rola`', color=RED),
+                            mention_author=False); return
+        rid = args[0].strip('<@&>').strip()
+        try:
+            role = msg.guild.get_role(int(rid))
+        except ValueError:
+            role = discord.utils.find(lambda r: r.name.lower() == ' '.join(args).lower(), msg.guild.roles)
+        if not role:
+            await msg.reply(embed=discord.Embed(description='❌ Nie znaleziono roli.', color=RED),
+                            mention_author=False); return
+        color_int = role.color.value or BLURPLE
+        e = discord.Embed(title=f'🎭 Rola – {role.name}', color=color_int)
+        e.add_field(name='ID', value=str(role.id), inline=True)
+        e.add_field(name='Kolor', value=str(role.color), inline=True)
+        e.add_field(name='Pozycja', value=str(role.position), inline=True)
+        e.add_field(name='Członkowie', value=str(len(role.members)), inline=True)
+        e.add_field(name='Hoistowana', value='Tak' if role.hoist else 'Nie', inline=True)
+        e.add_field(name='Wzmiankowalna', value='Tak' if role.mentionable else 'Nie', inline=True)
+        e.add_field(name='Zarządzana', value='Tak (np. bot/integracja)' if role.managed else 'Nie', inline=True)
+        e.add_field(name='Utworzona', value=role.created_at.strftime('%d.%m.%Y'), inline=True)
         await msg.reply(embed=e, mention_author=False)
 
 
