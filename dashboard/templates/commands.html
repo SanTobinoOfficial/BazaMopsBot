@@ -1,0 +1,369 @@
+{% extends 'base.html' %}
+{% block title %}Komendy – {{ guild_name }}{% endblock %}
+{% block content %}
+
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <div>
+    <h3 class="fw-bold text-white mb-0">📖 Lista Komend</h3>
+    <small class="text-muted">Prefix: <code>.</code> &nbsp;|&nbsp; Wszystkie komendy bota</small>
+  </div>
+  <input type="text" id="cmd-search" class="form-control w-auto"
+         placeholder="🔍 Szukaj komendy..." style="min-width:220px">
+</div>
+
+{% set categories = [
+  {
+    'id': 'ranks',
+    'icon': 'bi-star',
+    'title': 'Rangi i Punkty',
+    'color': 'var(--discord-blue)',
+    'admin': false,
+    'source': 'MEE6 / własny',
+    'commands': [
+      {'.points [@user]': 'Pokaż swoje punkty, rangę i postęp'},
+      {'.rank [@user]': 'Szczegółowa karta rangi z postępem'},
+      {'.level [@user]': 'Alias dla .rank (styl MEE6)'},
+      {'.lb': 'Top 10 ranking aktywności (punkty)'},
+      {'.leaderboard': 'Alias dla .lb'},
+      {'.history': 'Historia ostatnich 10 sesji clock-in'},
+      {'.profile [@user]': 'Pełny profil: punkty, rangi, ekonomia, frakcja'},
+      {'.clock': 'Status zalogowania i szacowane punkty'},
+    ]
+  },
+  {
+    'id': 'eco',
+    'icon': 'bi-coin',
+    'title': 'Ekonomia',
+    'color': 'var(--discord-yellow)',
+    'admin': false,
+    'source': 'Dank Memer / UnbelievaBoat',
+    'commands': [
+      {'.balance [@user]': 'Portfel: gotówka + bank (alias: .bal, .portfel)'},
+      {'.daily': 'Dzienna nagroda 100–200 🐾 (cooldown 24h)'},
+      {'.work': 'Zarabiaj 30–80 🐾 pracując (cooldown 1h)'},
+      {'.beg': 'Żebraj o 1–30 🐾, 30% szans na nic (cooldown 30min)'},
+      {'.pay @user <kwota>': 'Przelej gotówkę innemu użytkownikowi'},
+      {'.deposit <kwota|all>': 'Wpłać gotówkę do banku'},
+      {'.withdraw <kwota|all>': 'Wypłać pieniądze z banku'},
+      {'.shop': 'Sklep – zamień 🐾 na punkty (100 🐾 = 5 pkt)'},
+      {'.buy <nr>': 'Kup pakiet punktów ze sklepu'},
+      {'.eco': 'Ranking bogaczy – top 10 (alias: .ecolb)'},
+    ]
+  },
+  {
+    'id': 'minigames',
+    'icon': 'bi-controller',
+    'title': 'Minigry',
+    'color': '#9b59b6',
+    'admin': false,
+    'source': 'Tatsu / Dank Memer',
+    'commands': [
+      {'.slots [stawka]': 'Automat – opcjonalnie postaw 🐾, jackpot ×20 (cooldown 2min)'},
+      {'.fish': 'Wędkowanie – łów ryby i zarabiaj 🐾 (cooldown 45min)'},
+      {'.mine': 'Kopalnia – kopaj złoto, diamenty 🐾 (cooldown 1h)'},
+      {'.hunt': 'Polowanie – upoluj zwierzęta za 🐾 (cooldown 1h)'},
+    ]
+  },
+  {
+    'id': 'fun',
+    'icon': 'bi-emoji-laughing',
+    'title': 'Fun',
+    'color': 'var(--discord-green)',
+    'admin': false,
+    'source': 'Tatsu / ProBot / OwO Bot',
+    'commands': [
+      {'.8ball <pytanie>': 'Wróżba z magicznej kuli (zielony/żółty/czerwony)'},
+      {'.coinflip': 'Orzeł czy reszka'},
+      {'.roll [NdK]': 'Rzuć kością – np. .roll 2d6, .roll 20, .roll d100'},
+      {'.choose op1 op2...': 'Wybierz losowo z podanych opcji'},
+      {'.joke': 'Losowy dowcip z ukrytą odpowiedzią (spoiler)'},
+      {'.quote': 'Losowy cytat motywacyjny'},
+      {'.owo <tekst>': 'Owifikacja tekstu – zamienia r/l → w, dodaje twarz'},
+      {'.hug [@user]': 'Przytul kogoś (z GIF)'},
+      {'.pat [@user]': 'Pogłaszcz kogoś (z GIF)'},
+      {'.slap [@user]': 'Daj liścia'},
+      {'.gg [@user]': 'Pogratuluj komuś'},
+      {'.rep @user': 'Daj punkt reputacji (cooldown 24h)'},
+      {'.trivia': 'Losowe pytanie quizowe, 15 sekund na odpowiedź'},
+      {'.poll <pytanie>': 'Utwórz ankietę ✅/❌'},
+    ]
+  },
+  {
+    'id': 'utility',
+    'icon': 'bi-tools',
+    'title': 'Narzędzia',
+    'color': '#1abc9c',
+    'admin': false,
+    'source': 'MEE6 / Carl-bot',
+    'commands': [
+      {'.ping': 'Latencja bota w ms'},
+      {'.uptime': 'Czas działania bota'},
+      {'.remindme <czas> <tekst>': 'Ustaw przypomnienie – .remindme 1h30m sprawdź piekarnik'},
+      {'.avatar [@user]': 'Pokaż avatar użytkownika (link HD)'},
+      {'.serverinfo': 'Info o serwerze: członkowie, kanały, role, boosty'},
+      {'.roleinfo @rola': 'Info o roli: ID, kolor, członkowie, uprawnienia'},
+      {'.tag <nazwa>': 'Wyświetl tag serwera (tekstowy skrót)'},
+      {'.taglist': 'Lista wszystkich tagów serwera z liczbą użyć'},
+      {'.help': 'Lista komend bota'},
+    ]
+  },
+  {
+    'id': 'mod',
+    'icon': 'bi-shield-check',
+    'title': 'Moderacja',
+    'color': 'var(--discord-red)',
+    'admin': true,
+    'source': 'Dyno / ProBot / Carl-bot',
+    'commands': [
+      {'.warn @user [powód]': 'Ostrzeż użytkownika (+0.5 warn points). Auto: 1=timeout 1h, 2=kick, 3=ban'},
+      {'.warnpoints @user [powód]': 'Dodaj warn point do leaderboarda (bez normalnego warna)'},
+      {'.warnlb': 'Leaderboard warn pointów'},
+      {'.warnings [@user]': 'Lista ostrzeżeń użytkownika'},
+      {'.clearwarn @user [id]': 'Usuń ostrzeżenie (wszystkie lub konkretne ID)'},
+      {'.clearwarnpoints @user': 'Wyzeruj warn points użytkownika'},
+      {'.mute @user [czas] [powód]': 'Timeout Discord – np. 1h30m (Dyno style)'},
+      {'.unmute @user': 'Cofnij timeout'},
+      {'.kick @user [powód]': 'Wyrzuć z serwera'},
+      {'.ban @user [powód]': 'Zbanuj na serwerze Discord'},
+      {'.unban @user': 'Odbanuj z rankingu bota'},
+      {'.tempban @user <czas> [powód]': 'Tymczasowy ban np. .tempban @user 7d spam'},
+      {'.softban @user [powód]': 'Ban + natychmiastowy unban (czyści wiadomości)'},
+      {'.purge <n>': 'Usuń ostatnie N wiadomości (maks. 100)'},
+      {'.slowmode <sekundy>': 'Ustaw slowmode na kanale (0 = wyłącz)'},
+      {'.note @user <treść>': 'Dodaj notatkę admina do użytkownika'},
+      {'.notes @user': 'Pokaż notatki użytkownika'},
+      {'.deletenote @user <id>': 'Usuń konkretną notatkę'},
+    ]
+  },
+  {
+    'id': 'channels',
+    'icon': 'bi-lock',
+    'title': 'Kanały i Głos',
+    'color': '#e67e22',
+    'admin': true,
+    'source': 'Dyno / ProBot',
+    'commands': [
+      {'.lock [#kanał]': 'Zablokuj kanał – @everyone nie może pisać'},
+      {'.unlock [#kanał]': 'Odblokuj kanał'},
+      {'.hide [#kanał]': 'Ukryj kanał przed @everyone'},
+      {'.unhide [#kanał]': 'Odkryj kanał'},
+      {'.announce #kanał <tekst>': 'Wyślij ogłoszenie jako embed na wybrany kanał'},
+      {'.nick @user <nick|reset>': 'Zmień lub zresetuj nick użytkownika'},
+      {'.move @user #voice': 'Przenieś użytkownika do kanału głosowego'},
+      {'.deafen @user': 'Server deafen użytkownika na kanale głosowym'},
+      {'.undeafen @user': 'Cofnij server deafen'},
+    ]
+  },
+  {
+    'id': 'tags',
+    'icon': 'bi-tag',
+    'title': 'Tagi',
+    'color': '#3498db',
+    'admin': true,
+    'source': 'Carl-bot',
+    'commands': [
+      {'.tag create <nazwa> <treść>': 'Utwórz nowy tag tekstowy'},
+      {'.tag edit <nazwa> <treść>': 'Edytuj istniejący tag'},
+      {'.tag delete <nazwa>': 'Usuń tag'},
+      {'.tag list': 'Lista wszystkich tagów (admin)'},
+    ]
+  },
+  {
+    'id': 'points_admin',
+    'icon': 'bi-plus-circle',
+    'title': 'Punkty (Admin)',
+    'color': 'var(--discord-blue)',
+    'admin': true,
+    'source': 'własny',
+    'commands': [
+      {'.addpoints @user <n> [nota]': 'Dodaj punkty użytkownikowi'},
+      {'.removepoints @user <n> [nota]': 'Odejmij punkty'},
+      {'.setpoints @user <n>': 'Ustaw dokładną liczbę punktów'},
+      {'.addmoney @user <n>': 'Dodaj mopsy do portfela'},
+      {'.removemoney @user <n>': 'Odejmij mopsy'},
+      {'.setmoney @user <n>': 'Ustaw dokładną kwotę'},
+    ]
+  },
+  {
+    'id': 'ranks_admin',
+    'icon': 'bi-star-fill',
+    'title': 'Rangi (Admin)',
+    'color': 'var(--discord-blue)',
+    'admin': true,
+    'source': 'własny',
+    'commands': [
+      {'.createrank <nazwa> <pkt|SPECIAL|UNIT>': 'Utwórz rangę (SPECIAL=specjalna, UNIT=owner only)'},
+      {'.deleterank <nazwa>': 'Usuń rangę'},
+      {'.editrank <nazwa> <pole> <wartość>': 'Edytuj pole: name, points, icon, color, description, category, faction'},
+      {'.giverank @user <ranga>': 'Nadaj rangę specjalną użytkownikowi'},
+      {'.takerank @user <ranga>': 'Odbierz rangę specjalną'},
+      {'.ranks': 'Lista wszystkich rang serwera'},
+    ]
+  },
+  {
+    'id': 'mgmt',
+    'icon': 'bi-person-gear',
+    'title': 'Zarządzanie (Admin)',
+    'color': 'var(--discord-blue)',
+    'admin': true,
+    'source': 'własny',
+    'commands': [
+      {'.userinfo @user': 'Pełne info o użytkowniku (Discord + bot)'},
+      {'.forceclockout @user': 'Wymuś clock-out użytkownika'},
+      {'.resetuser @user': 'Zresetuj wszystkie dane użytkownika'},
+      {'.serverstats': 'Statystyki serwera'},
+      {'.config': 'Pokaż konfigurację serwera'},
+    ]
+  },
+  {
+    'id': 'setup',
+    'icon': 'bi-gear',
+    'title': 'Setup (Admin)',
+    'color': '#95a5a6',
+    'admin': true,
+    'source': 'własny',
+    'commands': [
+      {'.setchannel <typ> #kanał': 'Ustaw kanał (clock/log/panel/jobs)'},
+      {'.setpoints_h <n>': 'Punkty za godzinę clock-in'},
+      {'.adminrole @rola': 'Dodaj rolę admina bota'},
+      {'.removeadminrole @rola': 'Usuń rolę admina'},
+      {'.setowner @user': 'Ustaw właściciela/dowódcę (nadaje rangi UNIT)'},
+      {'.setwarnlimit <n>': 'Ile warnów = auto-ban (domyślnie 3)'},
+      {'.setmaxhours <h>': 'Max godzin clock-in bez wylogowania (anti-cheat)'},
+    ]
+  },
+] %}
+
+<!-- Category pills nav -->
+<div class="mb-4 d-flex flex-wrap gap-2" id="category-pills">
+  <button class="btn btn-sm btn-discord active" data-filter="all">Wszystkie</button>
+  <button class="btn btn-sm btn-outline-secondary" data-filter="user">👤 Użytkownik</button>
+  <button class="btn btn-sm btn-outline-danger" data-filter="admin">🔨 Admin</button>
+  {% for cat in categories %}
+  <button class="btn btn-sm btn-outline-secondary" data-filter="{{ cat.id }}">{{ cat.title }}</button>
+  {% endfor %}
+</div>
+
+<!-- Command cards -->
+{% for cat in categories %}
+<div class="card mb-3 cmd-category" data-category="{{ cat.id }}" data-admin="{{ 'true' if cat.admin else 'false' }}">
+  <div class="card-header d-flex align-items-center justify-content-between py-2">
+    <div class="d-flex align-items-center gap-2">
+      <i class="bi {{ cat.icon }}" style="color: {{ cat.color }}; font-size:1.1rem"></i>
+      <span class="fw-semibold text-white">{{ cat.title }}</span>
+      {% if cat.admin %}
+      <span class="badge bg-danger ms-1" style="font-size:.65rem">ADMIN</span>
+      {% else %}
+      <span class="badge bg-success ms-1" style="font-size:.65rem">UŻYTKOWNIK</span>
+      {% endif %}
+    </div>
+    <small class="text-muted">źródło: {{ cat.source }}</small>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th style="width:35%">Komenda</th>
+          <th>Opis</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for cmd_dict in cat.commands %}
+        {% for cmd, desc in cmd_dict.items() %}
+        <tr class="cmd-row" data-cmd="{{ cmd | lower }}">
+          <td><code style="color: {{ cat.color }}; font-size:.85rem">{{ cmd }}</code></td>
+          <td class="text-muted" style="font-size:.9rem">{{ desc }}</td>
+        </tr>
+        {% endfor %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endfor %}
+
+<div id="no-results" class="text-center text-muted py-5" style="display:none">
+  <i class="bi bi-search" style="font-size:2rem"></i>
+  <p class="mt-2">Nie znaleziono komendy.</p>
+</div>
+
+<!-- Stats footer -->
+<div class="card mt-3">
+  <div class="card-body py-2 d-flex gap-4 flex-wrap">
+    <small class="text-muted"><i class="bi bi-terminal me-1"></i>
+      <strong class="text-white">
+        {{ categories | selectattr('admin', 'equalto', false) | map(attribute='commands') | map('length') | sum }}
+      </strong> komend użytkownika
+    </small>
+    <small class="text-muted"><i class="bi bi-shield me-1"></i>
+      <strong class="text-white">
+        {{ categories | selectattr('admin', 'equalto', true) | map(attribute='commands') | map('length') | sum }}
+      </strong> komend admina
+    </small>
+    <small class="text-muted"><i class="bi bi-hash me-1"></i>Prefix: <strong class="text-white">.</strong></small>
+    <small class="text-muted"><i class="bi bi-coin me-1"></i>Waluta: <strong class="text-white">Mopsy 🐾</strong></small>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  code { background: rgba(114,137,218,.15); padding: .15em .4em; border-radius: 4px; }
+  .cmd-row:hover td { background: rgba(255,255,255,.03); }
+  #cmd-search { background: var(--bs-secondary-bg); border-color: #40444b; color: #fff; }
+  #cmd-search:focus { background: var(--bs-secondary-bg); border-color: var(--discord-blue);
+                      box-shadow: 0 0 0 .2rem rgba(114,137,218,.25); color: #fff; }
+  #cmd-search::placeholder { color: #6c757d; }
+  .btn-discord.active { background: var(--discord-blue) !important; color: #fff !important; }
+</style>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const searchInput = document.getElementById('cmd-search');
+  const pills = document.querySelectorAll('#category-pills button');
+  const categories = document.querySelectorAll('.cmd-category');
+  let activeFilter = 'all';
+
+  function applyFilters() {
+    const query = searchInput.value.trim().toLowerCase();
+    let anyVisible = false;
+
+    categories.forEach(cat => {
+      const catId = cat.dataset.category;
+      const isAdmin = cat.dataset.admin === 'true';
+
+      // Filter by category pill
+      let catVisible = activeFilter === 'all'
+        || activeFilter === catId
+        || (activeFilter === 'user' && !isAdmin)
+        || (activeFilter === 'admin' && isAdmin);
+
+      let rowVisible = false;
+      cat.querySelectorAll('.cmd-row').forEach(row => {
+        const cmdText = row.dataset.cmd || '';
+        const fullText = row.textContent.toLowerCase();
+        const match = !query || cmdText.includes(query) || fullText.includes(query);
+        row.style.display = (catVisible && match) ? '' : 'none';
+        if (catVisible && match) rowVisible = true;
+      });
+
+      cat.style.display = (catVisible && (rowVisible || !query)) ? '' : 'none';
+      if (cat.style.display !== 'none') anyVisible = true;
+    });
+
+    document.getElementById('no-results').style.display = anyVisible ? 'none' : '';
+  }
+
+  pills.forEach(btn => {
+    btn.addEventListener('click', () => {
+      pills.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeFilter = btn.dataset.filter;
+      applyFilters();
+    });
+  });
+
+  searchInput.addEventListener('input', applyFilters);
+});
+</script>
+{% endblock %}

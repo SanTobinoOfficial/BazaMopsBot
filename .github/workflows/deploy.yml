@@ -1,0 +1,57 @@
+name: Deploy to Render
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # ── 1. Sprawdź składnię Python ──────────────────────────────────────────────
+  lint:
+    name: Sprawdź kod (Python syntax)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pobierz kod
+        uses: actions/checkout@v4
+
+      - name: Ustaw Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Zainstaluj zależności
+        run: pip install -r requirements.txt
+
+      - name: Sprawdź składnię (py_compile)
+        run: |
+          python -m py_compile main.py
+          python -m py_compile database.py
+          python -m py_compile discord_bot.py
+          python -m py_compile dashboard/app.py
+          python -m py_compile cogs/admin.py
+          python -m py_compile cogs/user.py
+          python -m py_compile cogs/clockin.py
+          python -m py_compile cogs/panel.py
+          python -m py_compile cogs/jobs.py
+          echo "Wszystkie pliki OK"
+
+      - name: Sprawdź importy (flake8 - tylko błędy krytyczne)
+        run: |
+          pip install flake8
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics \
+            --exclude=__pycache__,data,esp32
+
+  # ── 2. Deploy na Render (tylko push do main) ────────────────────────────────
+  deploy:
+    name: Deploy na Render
+    runs-on: ubuntu-latest
+    needs: lint
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Triggeruj deploy Render
+        run: |
+          curl -s -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}" \
+            -H "Content-Type: application/json" \
+            --fail
+          echo "Deploy triggered!"

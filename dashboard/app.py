@@ -282,6 +282,19 @@ def index():
     return render_template('index.html', guilds=guilds)
 
 
+# ─── Commands page ────────────────────────────────────────────────────────────
+
+@app.route('/guild/<int:guild_id>/commands')
+@login_required
+def commands_page(guild_id):
+    db.ensure_guild(guild_id)
+    info = _guild_info(guild_id)
+    return render_template('commands.html',
+                           guild_id=guild_id,
+                           guild_name=info.get('name', str(guild_id)),
+                           icon_url=info.get('icon_url'))
+
+
 # ─── Guild overview ───────────────────────────────────────────────────────────
 
 @app.route('/guild/<int:guild_id>')
