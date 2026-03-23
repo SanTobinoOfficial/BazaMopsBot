@@ -81,6 +81,11 @@ class AdminCog(commands.Cog):
             'setpoints_h':     self._cmd_setpointshour,
             'adminrole':       self._cmd_adminrole,
             'removeadminrole': self._cmd_removeadminrole,
+            'officerole':      self._cmd_officerole,
+            'removeofficerole':self._cmd_removeofficerole,
+            'modrole':         self._cmd_modrole,
+            'removemodrole':   self._cmd_removemodrole,
+            'perminfo':        self._cmd_perminfo,
             'setowner':        self._cmd_setowner,
             'setwarnlimit':    self._cmd_setwarnlimit,
             'setmaxhours':     self._cmd_setmaxhours,
@@ -122,42 +127,75 @@ class AdminCog(commands.Cog):
 
     # ── Permission helpers ────────────────────────────────────────────────────
 
-    async def _is_admin(self, member: discord.Member, guild_id: int) -> bool:
-        if member.guild_permissions.administrator:
-            return True
-        cfg = db.get_guild(guild_id)
-        if not cfg:
-            return False
-        try:
-            role_ids = json.loads(cfg.get('admin_role_ids') or '[]')
-        except Exception:
-            role_ids = []
-        return any(r.id in role_ids for r in member.roles)
+    # ── Admin tier constants ──────────────────────────────────────────────────
+    # tier 1 = Moderator (warn, mute, kick, note, nick, slowmode, lock, move...)
+    # tier 2 = Oficer    (ban, purge, addpoints, giverank, addmoney, announce...)
+    # tier 3 = Admin     (setpoints, resetuser, createrank, createfaction, config...)
+    _MOD_CMDS = {
+        'warn','warnings','clearwarn','warnpoints','warnlb',
+        'mute','unmute','kick','note','notes','deletenote',
+        'nick','move','deafen','undeafen','slowmode',
+        'lock','unlock','hide','unhide',
+        'userinfo','forceclockout',
+        'tag','tagcreate','tagdelete','tagedit',
+    }
+    _OFFICER_CMDS = {
+        'ban','unban','tempban','softban','purge',
+        'addpoints','removepoints','giverank','takerank',
+        'addmoney','removemoney',
+        'clearwarnpoints',
+        'announce',
+        'givejob','takejob',
+        'assignfaction','removefaction',
+        'serverstats',
+    }
+    # Everything else requires full admin (tier 3)
 
-    async def _can_use_cmd(self, member: discord.Member, guild_id: int,
-                           command_name: str) -> bool:
-        """Check command-level permission, falling back to admin check."""
-        perm = db.get_command_permission(guild_id, command_name)
-        if perm:
-            try:
-                allowed = json.loads(perm['allowed_role_ids'])
-            except Exception:
-                allowed = []
-            if allowed:
-                if any(r.id in allowed for r in member.roles):
-                    return True
-                # Command has explicit roles set – don't fall through to admin
-                if not member.guild_permissions.administrator:
-                    return False
-        return await self._is_admin(member, guild_id)
+    def _get_tier_ids(self, cfg: dict, tier: str) -> set:
+        """Return combined role IDs for given tier and above."""
+        admin   = set(json.loads(cfg.get('admin_role_ids')   or '[]'))
+        officer = set(json.loads(cfg.get('officer_role_ids') or '[]'))
+        mod     = set(json.loads(cfg.get('mod_role_ids')     or '[]'))
+        if tier == 'mod':
+            return admin | officer | mod
+        if tier == 'officer':
+            return admin | officer
+        return admin  # 'admin' tier
 
     def _is_server_owner(self, member: discord.Member, guild_id: int) -> bool:
         if member.id == member.guild.owner_id:
             return True
         cfg = db.get_guild(guild_id)
-        if cfg and cfg.get('owner_id') and member.id == cfg['owner_id']:
+        return bool(cfg and cfg.get('owner_id') and member.id == cfg['owner_id'])
+
+    async def _is_admin(self, member: discord.Member, guild_id: int) -> bool:
+        if member.guild_permissions.administrator or self._is_server_owner(member, guild_id):
             return True
+        cfg = db.get_guild(guild_id) or {}
+        return any(r.id in self._get_tier_ids(cfg, 'admin') for r in member.roles)
+
+    async def _check_admin(self, msg: discord.Message) -> bool:
+        """Full admin required."""
+        if await self._is_admin(msg.author, msg.guild.id):
+            return True
+        await msg.reply(embed=_err('Brak uprawnień. Wymagana ranga: **Admin/Generał**.'),
+                        mention_author=False)
         return False
+
+    async def _can_use_cmd(self, member: discord.Member, guild_id: int,
+                           command_name: str) -> bool:
+        """Determine required tier from command name and check member roles."""
+        if member.guild_permissions.administrator or self._is_server_owner(member, guild_id):
+            return True
+        cfg = db.get_guild(guild_id) or {}
+        if command_name in self._MOD_CMDS:
+            tier = 'mod'
+        elif command_name in self._OFFICER_CMDS:
+            tier = 'officer'
+        else:
+            tier = 'admin'
+        ids = self._get_tier_ids(cfg, tier)
+        return any(r.id in ids for r in member.roles)
 
     async def _can_grant_rank(self, member: discord.Member,
                               guild_id: int, rank: dict) -> bool:
@@ -848,19 +886,19 @@ class AdminCog(commands.Cog):
     # ── Setup ─────────────────────────────────────────────────────────────────
 
     async def _cmd_resetperms(self, msg, args):
-        """Reset rank command permissions to defaults."""
+        """Clear all rank command restrictions (everyone gets full user command access)."""
         if not await self._check_admin(msg): return
-        n = db.force_reseed_permissions(msg.guild.id)
+        db.force_reseed_permissions(msg.guild.id)
         e = discord.Embed(
-            title='✅ Uprawnienia zresetowane',
+            title='✅ Uprawnienia użytkowników zresetowane',
             description=(
-                f'Ustawiono **{n}** reguł uprawnień dla rang.\n\n'
-                '**Poziomy dostępu:**\n'
-                '`Rekrut` — podstawowe komendy\n'
-                '`Szeregowy` — + ekonomia, sklep, aktywności, social\n'
-                '`Porucznik` — + slots, scratch, highlow, transfer\n'
-                '`Squad Leader` — + blackjack, reminders, tagi\n'
-                '`Sierżant` — wszystkie komendy'
+                'Wszystkie restrykcje komend użytkownika zostały usunięte.\n'
+                'Każdy ma teraz dostęp do ekonomii, gier i fun.\n\n'
+                'Aby zarządzać uprawnieniami **adminów**:\n'
+                '`.perminfo` — pokaż konfigurację\n'
+                '`.adminrole @rola` — Generał/Królewscy\n'
+                '`.officerole @rola` — Kapitan\n'
+                '`.modrole @rola` — Military Police / Squad Leader'
             ), color=0x43B581)
         await msg.reply(embed=e, mention_author=False)
 
@@ -946,6 +984,82 @@ class AdminCog(commands.Cog):
         ids = [i for i in json.loads(cfg.get('admin_role_ids') or '[]') if i != rid]
         db.update_guild(msg.guild.id, admin_role_ids=json.dumps(ids))
         await msg.reply(embed=_ok('Usunięto rolę z listy adminów.'), mention_author=False)
+
+    def _role_cmd(self, key: str):
+        """Helper: return (add_fn, remove_fn) for a given config key."""
+        async def _add(msg, args):
+            if not await self._check_admin(msg): return
+            if not args:
+                await msg.reply(embed=_err(f'`.{key}role @rola`'), mention_author=False); return
+            rid = args[0].strip('<@&>').strip()
+            try: rid = int(rid)
+            except ValueError:
+                await msg.reply(embed=_err('Nieprawidłowa rola.'), mention_author=False); return
+            role = msg.guild.get_role(rid)
+            if not role:
+                await msg.reply(embed=_err('Rola nie istnieje.'), mention_author=False); return
+            cfg = db.get_guild(msg.guild.id) or {}
+            ids = json.loads(cfg.get(f'{key}_role_ids') or '[]')
+            if rid not in ids: ids.append(rid)
+            db.update_guild(msg.guild.id, **{f'{key}_role_ids': json.dumps(ids)})
+            tier_names = {'mod': 'Moderator', 'officer': 'Oficer', 'admin': 'Admin'}
+            await msg.reply(embed=_ok(f'Dodano {role.mention} do grupy **{tier_names.get(key, key)}**.'),
+                            mention_author=False)
+        async def _remove(msg, args):
+            if not await self._check_admin(msg): return
+            if not args:
+                await msg.reply(embed=_err(f'`.remove{key}role @rola`'), mention_author=False); return
+            rid = args[0].strip('<@&>').strip()
+            try: rid = int(rid)
+            except ValueError:
+                await msg.reply(embed=_err('Nieprawidłowa rola.'), mention_author=False); return
+            cfg = db.get_guild(msg.guild.id) or {}
+            ids = [i for i in json.loads(cfg.get(f'{key}_role_ids') or '[]') if i != rid]
+            db.update_guild(msg.guild.id, **{f'{key}_role_ids': json.dumps(ids)})
+            await msg.reply(embed=_ok(f'Usunięto rolę z grupy **{key}**.'), mention_author=False)
+        return _add, _remove
+
+    async def _cmd_officerole(self, msg, args):
+        fn, _ = self._role_cmd('officer')
+        await fn(msg, args)
+
+    async def _cmd_removeofficerole(self, msg, args):
+        _, fn = self._role_cmd('officer')
+        await fn(msg, args)
+
+    async def _cmd_modrole(self, msg, args):
+        fn, _ = self._role_cmd('mod')
+        await fn(msg, args)
+
+    async def _cmd_removemodrole(self, msg, args):
+        _, fn = self._role_cmd('mod')
+        await fn(msg, args)
+
+    async def _cmd_perminfo(self, msg, args):
+        """Show current permission tier configuration."""
+        if not await self._check_admin(msg): return
+        cfg = db.get_guild(msg.guild.id) or {}
+        e = discord.Embed(title='🔐 Poziomy uprawnień', color=0x7289DA)
+        def fmt_roles(key):
+            try:
+                ids = json.loads(cfg.get(key) or '[]')
+            except Exception:
+                ids = []
+            if not ids:
+                return '*Brak — ustaw komendą*'
+            roles = [msg.guild.get_role(rid) for rid in ids]
+            return ' '.join(r.mention for r in roles if r) or '*nieznane role*'
+        e.add_field(name='👑 Admin (`.adminrole`)',
+            value=fmt_roles('admin_role_ids') + '\n*Generał, Książę, Król*\n'
+                  '`setpoints` `resetuser` `createrank` `config` `events`...', inline=False)
+        e.add_field(name='⚔️ Oficer (`.officerole`)',
+            value=fmt_roles('officer_role_ids') + '\n*Kapitan*\n'
+                  '`ban` `addpoints` `giverank` `announce` `purge`...', inline=False)
+        e.add_field(name='🛡️ Moderator (`.modrole`)',
+            value=fmt_roles('mod_role_ids') + '\n*Military Police, Squad Leader+*\n'
+                  '`warn` `mute` `kick` `note` `lock` `nick`...', inline=False)
+        e.set_footer(text='Każdy wyższy poziom ma też dostęp do komend niższego.')
+        await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_setowner(self, msg, args):
         """Set the guild 'owner/commander' who can grant UNIT ranks."""

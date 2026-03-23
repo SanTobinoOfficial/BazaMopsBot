@@ -381,6 +381,9 @@ def _run_migrations(conn):
             UNIQUE(guild_id, rank_id, command_name))""",
         # Jobs get unique cash earnings per hour (on top of points)
         "ALTER TABLE jobs ADD COLUMN cash_per_hour REAL DEFAULT 0",
+        # Admin permission tiers: mod < officer < admin
+        "ALTER TABLE guilds ADD COLUMN mod_role_ids     TEXT DEFAULT '[]'",
+        "ALTER TABLE guilds ADD COLUMN officer_role_ids TEXT DEFAULT '[]'",
     ]
     for m in migrations:
         try:
@@ -2167,26 +2170,15 @@ def _rank_tier(req_points: float) -> int:
 
 
 def seed_default_permissions(guild_id: int) -> None:
-    """Set rank command permissions based on tier. Only runs if no perms exist yet."""
-    existing = get_all_rank_permissions(guild_id)
-    if existing:
-        return  # already configured
-    ranks = get_ranks(guild_id, auto_only=True)
-    for rank in ranks:
-        tier = _rank_tier(rank.get('required_points', 0))
-        for cmd, min_tier in _CMD_MIN_TIER.items():
-            allowed = tier >= min_tier
-            set_rank_permission(guild_id, rank['id'], cmd, allowed)
+    """No-op: all user commands are open by default (allowed=True)."""
+    pass
 
 
 def force_reseed_permissions(guild_id: int) -> int:
-    """Overwrite all rank permissions with defaults. Returns number of rules set."""
-    ranks = get_ranks(guild_id, auto_only=True)
-    count = 0
-    for rank in ranks:
-        tier = _rank_tier(rank.get('required_points', 0))
-        for cmd, min_tier in _CMD_MIN_TIER.items():
-            allowed = tier >= min_tier
-            set_rank_permission(guild_id, rank['id'], cmd, allowed)
-            count += 1
-    return count
+    """Clear all rank command restrictions — everyone can use all user commands."""
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute(
+                'DELETE FROM rank_command_permissions WHERE guild_id=?', (guild_id,))
+            conn.commit()
+    return 0
