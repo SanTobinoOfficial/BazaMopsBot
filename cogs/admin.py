@@ -75,6 +75,7 @@ class AdminCog(commands.Cog):
             # Server
             'serverstats':     self._cmd_serverstats,
             'config':          self._cmd_config,
+            'resetperms':      self._cmd_resetperms,
             # Setup
             'setchannel':      self._cmd_setchannel,
             'setpoints_h':     self._cmd_setpointshour,
@@ -845,6 +846,23 @@ class AdminCog(commands.Cog):
         await msg.reply(embed=e, mention_author=False)
 
     # ── Setup ─────────────────────────────────────────────────────────────────
+
+    async def _cmd_resetperms(self, msg, args):
+        """Reset rank command permissions to defaults."""
+        if not await self._check_admin(msg): return
+        n = db.force_reseed_permissions(msg.guild.id)
+        e = discord.Embed(
+            title='✅ Uprawnienia zresetowane',
+            description=(
+                f'Ustawiono **{n}** reguł uprawnień dla rang.\n\n'
+                '**Poziomy dostępu:**\n'
+                '`Rekrut` — podstawowe komendy\n'
+                '`Szeregowy` — + ekonomia, sklep, aktywności, social\n'
+                '`Porucznik` — + slots, scratch, highlow, transfer\n'
+                '`Squad Leader` — + blackjack, reminders, tagi\n'
+                '`Sierżant` — wszystkie komendy'
+            ), color=0x43B581)
+        await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_config(self, msg, args):
         cfg = db.get_guild(msg.guild.id) or {}

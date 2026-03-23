@@ -379,6 +379,8 @@ def _run_migrations(conn):
             command_name TEXT    NOT NULL,
             allowed      INTEGER NOT NULL DEFAULT 1,
             UNIQUE(guild_id, rank_id, command_name))""",
+        # Jobs get unique cash earnings per hour (on top of points)
+        "ALTER TABLE jobs ADD COLUMN cash_per_hour REAL DEFAULT 0",
     ]
     for m in migrations:
         try:
@@ -410,6 +412,7 @@ def ensure_guild(guild_id: int) -> Dict:
             conn.execute('INSERT OR IGNORE INTO guilds (guild_id, embed_schedule) VALUES (?,?)',
                          (guild_id, DEFAULT_SCHEDULE))
             conn.commit()
+    seed_default_permissions(guild_id)
     return get_guild(guild_id)
 
 
@@ -831,17 +834,20 @@ def clock_out(user_id: int, guild_id: int) -> Optional[Dict]:
     hours = secs / 3600
     mins = secs / 60
 
-    # Sum job bonuses for this user
+    # Sum job bonuses for this user (points and cash)
     job_bonus_pph = 0.0
+    job_cash_ph = 0.0
     with _get_conn() as _c:
         rows = _c.execute(
-            '''SELECT COALESCE(j.points_bonus_per_hour, 0) AS bonus
+            '''SELECT COALESCE(j.points_bonus_per_hour, 0) AS bonus,
+                      COALESCE(j.cash_per_hour, 0) AS cash_ph
                FROM user_jobs uj
                JOIN jobs j ON uj.job_id = j.id
                WHERE uj.user_id=? AND uj.guild_id=?''',
             (user_id, guild_id)
         ).fetchall()
         job_bonus_pph = sum(r['bonus'] for r in rows)
+        job_cash_ph   = sum(r['cash_ph'] for r in rows)
 
     effective_pph = pph + job_bonus_pph
     pts = round(hours * effective_pph, 2) if mins >= min_min else 0.0
@@ -870,6 +876,13 @@ def clock_out(user_id: int, guild_id: int) -> Optional[Dict]:
                 (round(hours, 4), co_dt.isoformat(), user_id, guild_id)
             )
             conn.commit()
+    # Cash earnings from jobs during session
+    cash_earned = 0.0
+    if job_cash_ph > 0 and mins >= min_min:
+        mopsy_mult = get_event_multiplier(guild_id, 'mopsy')
+        cash_earned = round(hours * job_cash_ph * mopsy_mult, 1)
+        add_cash(user_id, guild_id, cash_earned)
+
     if pts > 0:
         note = f'Sesja {round(hours, 2)}h | {ci_dt.strftime("%H:%M")}→{co_dt.strftime("%H:%M")}'
         if job_bonus_pph > 0:
@@ -881,6 +894,7 @@ def clock_out(user_id: int, guild_id: int) -> Optional[Dict]:
         'hours': round(hours, 4), 'minutes': round(mins, 1),
         'points_earned': pts, 'base_pts': base_pts,
         'job_bonus_pph': job_bonus_pph, 'effective_pph': effective_pph,
+        'cash_earned': cash_earned, 'job_cash_ph': job_cash_ph,
         'clock_in_time': ci_dt, 'clock_out_time': co_dt,
         'session_id': sess_id, 'enough_time': mins >= min_min,
     }
@@ -2120,3 +2134,59 @@ def get_event_multiplier(guild_id: int, etype: str) -> float:
         for e in relevant:
             result *= e['value']
         return result
+
+
+# ─── Default rank permissions seeding ────────────────────────────────────────
+
+# Which commands require minimum rank tier (1=Rekrut … 5=Sierżant)
+_CMD_MIN_TIER: dict = {
+    # Tier 2 (Szeregowy+)
+    'mine': 2, 'hunt': 2, 'shop': 2, 'buy': 2, 'kup': 2, 'sklep': 2,
+    'deposit': 2, 'withdraw': 2, 'rep': 2,
+    'hug': 2, 'pat': 2, 'slap': 2, 'gg': 2,
+    'ship': 2, 'rate': 2, 'reverse': 2, 'upper': 2, 'lower': 2, 'owo': 2, 'uwu': 2,
+    'rps': 2, 'trivia': 2, 'quiz': 2,
+    # Tier 3 (Porucznik+)
+    'slots': 3, 'scratch': 3, 'highlow': 3, 'hl': 3,
+    'pay': 3, 'przelej': 3, 'transfer': 3,
+    # Tier 4 (Squad Leader+)
+    'blackjack': 4, 'bj': 4, 'remindme': 4, 'remind': 4,
+    'tag': 4, 'taglist': 4,
+}
+
+# Points thresholds that define each tier (ascending)
+_TIER_THRESHOLDS = [10, 35, 75, 130, 200]
+
+
+def _rank_tier(req_points: float) -> int:
+    """Returns tier 1-5 based on required_points."""
+    for i, t in enumerate(_TIER_THRESHOLDS):
+        if req_points <= t:
+            return i + 1
+    return 5
+
+
+def seed_default_permissions(guild_id: int) -> None:
+    """Set rank command permissions based on tier. Only runs if no perms exist yet."""
+    existing = get_all_rank_permissions(guild_id)
+    if existing:
+        return  # already configured
+    ranks = get_ranks(guild_id, auto_only=True)
+    for rank in ranks:
+        tier = _rank_tier(rank.get('required_points', 0))
+        for cmd, min_tier in _CMD_MIN_TIER.items():
+            allowed = tier >= min_tier
+            set_rank_permission(guild_id, rank['id'], cmd, allowed)
+
+
+def force_reseed_permissions(guild_id: int) -> int:
+    """Overwrite all rank permissions with defaults. Returns number of rules set."""
+    ranks = get_ranks(guild_id, auto_only=True)
+    count = 0
+    for rank in ranks:
+        tier = _rank_tier(rank.get('required_points', 0))
+        for cmd, min_tier in _CMD_MIN_TIER.items():
+            allowed = tier >= min_tier
+            set_rank_permission(guild_id, rank['id'], cmd, allowed)
+            count += 1
+    return count

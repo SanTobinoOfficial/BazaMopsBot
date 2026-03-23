@@ -194,6 +194,10 @@ class UserCog(commands.Cog):
             'ri':          self._cmd_roleinfo,
             # Level alias (MEE6)
             'level':       self._cmd_rank,
+            # Jobs
+            'job':         self._cmd_job,
+            'praca':       self._cmd_job,
+            'jobs':        self._cmd_job,
         }
 
     def _resolve_member(self, msg, arg):
@@ -495,6 +499,29 @@ class UserCog(commands.Cog):
         e.set_footer(text='Wróć za 24h po kolejną nagrodę!')
         await msg.reply(embed=e, mention_author=False)
 
+    # ── Job flavour per job name (fallback → generic) ──────────────────────────
+    _JOB_WORK = {
+        'farmer':    [('zebrałeś plony','na polu'),('nakarmiłeś zwierzęta','w zagrodzie'),
+                      ('zasadziłeś nowe nasiona','w ogrodzie'),('sprzedałeś warzywa','na targu')],
+        'kowal':     [('wykułeś podkowy','przy kuźni'),('naprawiłeś zbroję','w warsztacie'),
+                      ('ostrzyłeś miecze','dla gwardii'),('odlałeś nowe okucia','przy piecu')],
+        'kupiec':    [('sprzedałeś towary','na placu'),('wynegocjowałeś kontrakt','z kupcem'),
+                      ('przewiozłeś ładunek','przez miasto'),('otworzyłeś nowy stoisko','na targu')],
+        'rajca':     [('przemawiałeś w radzie','na sesji'),('podpisałeś edykt','w ratuszu'),
+                      ('zebrałeś podatki','od kupców'),('reprezentowałeś gildię','przed szlachtą')],
+        'kierowca':  [('rozwiozłeś paczki','po całym mieście'),('dotarłeś na czas','mimo korków'),
+                      ('załadowałeś ciężarówkę','w magazynie'),('zrobiłeś nocną trasę','przez autostradę')],
+    }
+    _JOB_BASE = [
+        ('zbierałeś ziemniaki','na polu'),('rozwoziłeś pizzę','po mieście'),
+        ('sprzątałeś biuro','na noc'),('pilnowałeś magazynu','przez całą zmianę'),
+        ('naprawiałeś komputer','u sąsiada'),('sortowałeś paczki','w magazynie'),
+    ]
+    # cash bonus per work command per job name key (partial match)
+    _JOB_WORK_BONUS = {
+        'farmer': 20, 'kowal': 30, 'kupiec': 60, 'rajca': 100, 'kierowca': 150,
+    }
+
     async def _cmd_work(self, msg, args):
         if not await self._check_perm(msg, 'work'): return
         u = db.get_user(msg.author.id, msg.guild.id)
@@ -502,24 +529,132 @@ class UserCog(commands.Cog):
         if cd:
             e = discord.Embed(description=f'⏳ Jesteś zmęczony! Odpocznij jeszcze **{_fmt_cd(cd)}**.', color=RED)
             await msg.reply(embed=e, mention_author=False); return
-        jobs_list = [
-            ('zbierałeś ziemniaki', 'na polu'), ('rozwoziłeś pizzę', 'po mieście'),
-            ('sprzątałeś biuro', 'na noc'), ('pilnowałeś magazynu', 'przez całą zmianę'),
-            ('naprawiałeś komputer', 'u sąsiada'), ('strzyżeś trawniki', 'w parku'),
-            ('myłeś okna', 'w wieżowcu'), ('sortowałeś paczki', 'w magazynie'),
-            ('uczyłeś dzieci', 'grać na gitarze'), ('gotowałeś obiady', 'w stołówce'),
-        ]
-        job, place = random.choice(jobs_list)
-        reward = random.randint(30, 80)
+
+        # Check user's jobs for bonus and flavour text
+        user_jobs = db.get_user_jobs(msg.author.id, msg.guild.id)
+        bonus = 0
+        flavour_pool = self._JOB_BASE
+        job_names = []
+        for j in user_jobs:
+            jname = j.get('name', '').lower()
+            job_names.append(jname)
+            for key, b in self._JOB_WORK_BONUS.items():
+                if key in jname:
+                    bonus = max(bonus, b)
+                    pool = self._JOB_WORK.get(key)
+                    if pool:
+                        flavour_pool = pool
+                    break
+
+        job_txt, place_txt = random.choice(flavour_pool)
+        base = random.randint(30, 80)
+        reward = base + random.randint(0, bonus)
         mopsy_mult = db.get_event_multiplier(msg.guild.id, 'mopsy')
         reward = int(reward * mopsy_mult)
         db.add_cash(msg.author.id, msg.guild.id, reward)
         db.set_cooldown(msg.author.id, msg.guild.id, 'work_last')
         w = db.get_wallet(msg.author.id, msg.guild.id)
         e = discord.Embed(title='💼 Praca', color=GREEN)
-        e.description = f'Przez ostatnią godzinę **{job}** {place}.\nZarobiłeś {_fmt_money(reward)}!'
+        e.description = f'Przez ostatnią godzinę **{job_txt}** {place_txt}.\nZarobiłeś {_fmt_money(reward)}!'
+        if bonus > 0 and job_names:
+            e.set_footer(text=f'Bonus z pracy: +{bonus} 🐾 | Możesz pracować znowu za 1h')
+        else:
+            e.set_footer(text='Możesz pracować znowu za 1h')
         e.add_field(name='💵 Gotówka teraz', value=_fmt_money(w['cash']), inline=True)
-        e.set_footer(text='Możesz pracować znowu za 1h')
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_job(self, msg, args):
+        """Show / select / leave a job."""
+        if not await self._check_perm(msg, 'job'): return
+        gid = msg.guild.id
+        uid = msg.author.id
+        db.ensure_user(uid, gid, str(msg.author), msg.author.display_name)
+
+        # .job leave [name]
+        if args and args[0].lower() in ('leave', 'odejdź', 'rzuc', 'rzuć', 'quit'):
+            leave_name = ' '.join(args[1:]).strip().lower()
+            my_jobs = db.get_user_jobs(uid, gid)
+            if not my_jobs:
+                await msg.reply(embed=discord.Embed(description='❌ Nie masz żadnej pracy.', color=RED),
+                                mention_author=False); return
+            if not leave_name:
+                if len(my_jobs) == 1:
+                    target = my_jobs[0]
+                else:
+                    names = ', '.join(f'**{j["name"]}**' for j in my_jobs)
+                    await msg.reply(embed=discord.Embed(description=f'❓ Podaj nazwę pracy: `.job leave <nazwa>`\nTwoje prace: {names}', color=YELLOW),
+                                    mention_author=False); return
+            else:
+                target = next((j for j in my_jobs if leave_name in j['name'].lower()), None)
+                if not target:
+                    await msg.reply(embed=discord.Embed(description='❌ Nie znaleziono takiej pracy w Twoich stanowiskach.', color=RED),
+                                    mention_author=False); return
+            db.deselect_job(uid, gid, target['job_id'])
+            await msg.reply(embed=discord.Embed(
+                description=f'✅ Rzuciłeś pracę: **{target["icon"]} {target["name"]}**', color=ORANGE),
+                mention_author=False)
+            return
+
+        # .job [name] — select a job
+        if args:
+            query = ' '.join(args).lower()
+            all_jobs = db.get_jobs(gid)
+            target = next((j for j in all_jobs if query in j['name'].lower()), None)
+            if not target:
+                await msg.reply(embed=discord.Embed(description=f'❌ Nie znaleziono pracy: `{query}`', color=RED),
+                                mention_author=False); return
+            user = db.get_user(uid, gid) or {}
+            pts = user.get('points', 0) or 0
+            if pts < target.get('required_points', 0):
+                await msg.reply(embed=discord.Embed(
+                    description=f'❌ Potrzebujesz **{target["required_points"]} pkt** żeby podjąć tę pracę. Masz **{pts:.1f} pkt**.', color=RED),
+                    mention_author=False); return
+            my_jobs = db.get_user_jobs(uid, gid)
+            if any(j['job_id'] == target['id'] for j in my_jobs):
+                await msg.reply(embed=discord.Embed(description=f'ℹ️ Już pracujesz jako **{target["name"]}**.', color=YELLOW),
+                                mention_author=False); return
+            db.select_job(uid, gid, target['id'])
+            cph = target.get('cash_per_hour', 0) or 0
+            e = discord.Embed(title=f'{target["icon"]} Podjąłeś pracę!', color=GREEN)
+            e.description = (
+                f'Teraz pracujesz jako **{target["name"]}**.\n'
+                f'**Bonus pkt/h:** +{target.get("points_bonus_per_hour",0):.1f}\n'
+                f'**Mopsy/h (clock-in):** +{cph:.0f} 🐾\n'
+                f'**Bonus .work:** +{self._JOB_WORK_BONUS.get(next((k for k in self._JOB_WORK_BONUS if k in target["name"].lower()), ""), 0)} 🐾'
+            )
+            await msg.reply(embed=e, mention_author=False)
+            return
+
+        # .job — list
+        all_jobs = db.get_jobs(gid)
+        my_jobs  = db.get_user_jobs(uid, gid)
+        my_ids   = {j['job_id'] for j in my_jobs}
+        user     = db.get_user(uid, gid) or {}
+        pts      = user.get('points', 0) or 0
+
+        e = discord.Embed(title='💼 Prace na serwerze', color=BLURPLE)
+        e.set_footer(text='.job <nazwa>  →  podjąć pracę  |  .job leave <nazwa>  →  rzucić')
+
+        for j in all_jobs:
+            cph = j.get('cash_per_hour', 0) or 0
+            bpph = j.get('points_bonus_per_hour', 0) or 0
+            work_bonus = self._JOB_WORK_BONUS.get(
+                next((k for k in self._JOB_WORK_BONUS if k in j['name'].lower()), ''), 0)
+            status = '✅' if j['id'] in my_ids else ('🔒' if pts < j.get('required_points', 0) else '🔓')
+            val = (
+                f'Wymagane pkt: **{j["required_points"]:.0f}**\n'
+                f'Bonus pkt/h: **+{bpph:.1f}**\n'
+                f'Mopsy/h: **+{cph:.0f} 🐾**\n'
+                f'Bonus .work: **+{work_bonus} 🐾**'
+            )
+            e.add_field(name=f'{status} {j["icon"]} {j["name"]}', value=val, inline=True)
+
+        if my_jobs:
+            names = ', '.join(f'{j["icon"]} {j["name"]}' for j in my_jobs)
+            e.description = f'**Twoje prace:** {names}'
+        else:
+            e.description = '**Twoje prace:** Brak — użyj `.job <nazwa>` żeby podjąć pracę'
+
         await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_beg(self, msg, args):

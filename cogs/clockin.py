@@ -562,6 +562,9 @@ class ClockView(ui.View):
         else:
             pts_text = '*(zbyt krótka sesja)*'
         e.add_field(name='💰 Punkty', value=pts_text, inline=True)
+        cash_earned = result.get('cash_earned', 0.0)
+        if cash_earned > 0:
+            e.add_field(name='🐾 Mopsy z pracy', value=f'+**{cash_earned:.0f}** 🐾', inline=True)
         e.add_field(name='🕐 Clock In', value=ci.strftime('%H:%M'), inline=True)
         e.add_field(name='🕑 Clock Out', value=co.strftime('%H:%M'), inline=True)
         e.add_field(name='⭐ Ranga', value=_rank_line(uid, gid), inline=True)
