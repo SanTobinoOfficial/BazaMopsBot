@@ -3988,12 +3988,14 @@ def setup_mops_run(guild_id):
 
     # ── 7. Guild config + panel permission tiers ─────────────────────────────
     # Mod panel access hierarchy (based on MOPS role structure):
-    #   mod     = Sierżant, Squad Leader          (warn/mute/kick-voice)
-    #   officer = Kapitan, faction leads/generals  (ban/addpoints/factions)
-    #   admin   = Generał, Książę, Król            (full access)
-    _mod_names     = ['Sierżant', 'Squad Leader']
-    _officer_names = ['Kapitan', 'Alpha-1', 'Nu-7', 'Epsilon-11',
-                      'Generał Nu-7', 'Generał Epsilon-11', 'Military Police']
+    #   mod     = Sierżant, Squad Leader, Kapitan     (warn/mute/notes)
+    #   officer = Alpha-1 (Gwardia), Generał Nu-7,    (ban/addpoints/factions)
+    #             Generał Epsilon-11, Military Police
+    #             (Nu-7 i Epsilon-11 to tylko "jestem w frakcji" — nie officer)
+    #   admin   = Generał, Książę, Król               (full access)
+    _mod_names     = ['Sierżant', 'Squad Leader', 'Kapitan']
+    _officer_names = ['Alpha-1', 'Military Police',
+                      'Generał Nu-7', 'Generał Epsilon-11']
     _admin_names   = ['Generał', 'Książę', 'Król']
 
     def _rids(names): return [role_map[n] for n in names if n in role_map]
