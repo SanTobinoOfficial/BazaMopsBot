@@ -89,7 +89,18 @@
       <button class="cmd-btn" data-cmd="giverank"><span class="cmd-icon">⭐</span> Nadaj rangę</button>
       <button class="cmd-btn" data-cmd="takerank"><span class="cmd-icon">⬇️</span> Odbierz rangę</button>
 
+      <div class="cmd-section-label mt-2">🔇 Głos</div>
+      <button class="cmd-btn" data-cmd="deafen"><span class="cmd-icon">🔇</span> Deafen</button>
+      <button class="cmd-btn" data-cmd="undeafen"><span class="cmd-icon">🔊</span> Undeafen</button>
+
+      <div class="cmd-section-label mt-2">⏳ Tempban</div>
+      <button class="cmd-btn" data-cmd="tempban"><span class="cmd-icon">⌛</span> Tempban</button>
+
       <div class="cmd-section-label mt-2">👤 Użytkownik</div>
+      <button class="cmd-btn" data-cmd="lbban"><span class="cmd-icon">🚫</span> Ban z rankingu</button>
+      <button class="cmd-btn" data-cmd="lbunban"><span class="cmd-icon">✅</span> Unban z rankingu</button>
+      <button class="cmd-btn" data-cmd="clearwarnpoints"><span class="cmd-icon">🗑️</span> Wyzeruj warn pts</button>
+      <button class="cmd-btn" data-cmd="addnote"><span class="cmd-icon">📝</span> Dodaj notatkę</button>
       <button class="cmd-btn" data-cmd="forceclockout"><span class="cmd-icon">⏹️</span> Force clockout</button>
       <button class="cmd-btn" data-cmd="resetuser"><span class="cmd-icon">🔄</span> Reset usera</button>
       <button class="cmd-btn" data-cmd="assignfaction"><span class="cmd-icon">⚔️</span> Przypisz frakcję</button>
@@ -292,6 +303,13 @@ const CMD_CONFIG = {
   tagcreate:     { fields: ['tagname','tagcontent'],                                                    title: '➕ Utwórz tag' },
   tagdelete:     { fields: ['tagname'],                                                                  title: '🗑️ Usuń tag' },
   announce:      { fields: ['channel','announce'],                                                      title: '📢 Ogłoszenie' },
+  deafen:        { fields: ['user'],                                                                     title: '🔇 Server Deafen' },
+  undeafen:      { fields: ['user'],                                                                     title: '🔊 Cofnij Deafen' },
+  tempban:       { fields: ['user','duration','reason'],                                                 title: '⌛ Tymczasowy ban' },
+  lbban:         { fields: ['user'],                                                                     title: '🚫 Ban z rankingu (nie Discord)' },
+  lbunban:       { fields: ['user'],                                                                     title: '✅ Unban z rankingu' },
+  clearwarnpoints: { fields: ['user'],                                                                   title: '🗑️ Wyzeruj warn points' },
+  addnote:       { fields: ['user','note'],                                                              title: '📝 Dodaj notatkę do użytkownika' },
 };
 
 const ALL_FIELDS = ['user','userid-direct','amount','reason','note','duration','channel',

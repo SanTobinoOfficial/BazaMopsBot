@@ -154,7 +154,13 @@ class UserCog(commands.Cog):
             'ankieta':     self._cmd_poll,
             'trivia':      self._cmd_trivia,
             'quiz':        self._cmd_trivia,
-            # Ekonomia – minigry (Tatsu/Dank Memer)
+            # Ekonomia – minigry (Dank Memer / Tatsu)
+            'blackjack':   self._cmd_blackjack,
+            'bj':          self._cmd_blackjack,
+            'highlow':     self._cmd_highlow,
+            'hl':          self._cmd_highlow,
+            'scratch':     self._cmd_scratch,
+            'rps':         self._cmd_rps,
             'slots':       self._cmd_slots,
             'fish':        self._cmd_fish,
             'mine':        self._cmd_mine,
@@ -169,6 +175,12 @@ class UserCog(commands.Cog):
             'quote':       self._cmd_quote,
             'owo':         self._cmd_owo,
             'uwu':         self._cmd_owo,
+            'ship':        self._cmd_ship,
+            'rate':        self._cmd_rate,
+            'fact':        self._cmd_fact,
+            'reverse':     self._cmd_reverse,
+            'upper':       self._cmd_upper,
+            'lower':       self._cmd_lower,
             # Utility (MEE6/Carl-bot)
             'ping':        self._cmd_ping,
             'uptime':      self._cmd_uptime,
@@ -1012,6 +1024,228 @@ class UserCog(commands.Cog):
 
 
     # ══════════════════════════════════════════════════════════════════════════
+    # BLACKJACK / HIGHLOW / SCRATCH / RPS (Dank Memer style)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _bj_deck():
+        suits = ['♠', '♥', '♦', '♣']
+        ranks = ['A','2','3','4','5','6','7','8','9','10','J','Q','K']
+        deck = [(r, s) for s in suits for r in ranks]
+        random.shuffle(deck)
+        return deck
+
+    @staticmethod
+    def _bj_val(hand):
+        total, aces = 0, 0
+        for r, _ in hand:
+            if r in ('J','Q','K'): total += 10
+            elif r == 'A': total += 11; aces += 1
+            else: total += int(r)
+        while total > 21 and aces:
+            total -= 10; aces -= 1
+        return total
+
+    @staticmethod
+    def _bj_str(hand, hide=False):
+        if hide: return f'{hand[0][0]}{hand[0][1]} 🂠'
+        return ' '.join(f'{r}{s}' for r, s in hand)
+
+    async def _cmd_blackjack(self, msg, args):
+        """Blackjack z opcjonalną stawką mopsów."""
+        bet = 0
+        if args and args[0].isdigit():
+            bet = int(args[0])
+            if bet < 10:
+                await msg.reply(embed=discord.Embed(description='❌ Min. stawka to **10** 🐾.', color=RED),
+                                mention_author=False); return
+            w = db.get_wallet(msg.author.id, msg.guild.id)
+            if w['cash'] < bet:
+                await msg.reply(embed=discord.Embed(
+                    description=f'❌ Masz tylko **{int(w["cash"])}** 🐾!', color=RED),
+                    mention_author=False); return
+            db.add_cash(msg.author.id, msg.guild.id, -bet)
+
+        deck = self._bj_deck()
+        ph = [deck.pop(), deck.pop()]
+        dh = [deck.pop(), deck.pop()]
+
+        def make_embed(hide=True, result=None):
+            pv = self._bj_val(ph)
+            e = discord.Embed(title='🃏 Blackjack', color=GOLD)
+            dv_show = '??' if hide else str(self._bj_val(dh))
+            e.add_field(name=f'🤖 Krupier ({dv_show})', value=self._bj_str(dh, hide), inline=False)
+            e.add_field(name=f'👤 Ty ({pv})', value=self._bj_str(ph), inline=False)
+            if bet: e.add_field(name='Stawka', value=f'{bet} 🐾', inline=True)
+            if result: e.add_field(name='📊 Wynik', value=result, inline=False)
+            return e
+
+        # Check natural blackjack
+        if self._bj_val(ph) == 21:
+            win = int(bet * 2.5) if bet else 0
+            if bet: db.add_cash(msg.author.id, msg.guild.id, win)
+            await msg.reply(embed=make_embed(False, f'🎉 BLACKJACK!{f" +{win} 🐾" if bet else ""}'),
+                            mention_author=False); return
+
+        finished = [False]
+
+        class BJView(discord.ui.View):
+            def __init__(vself):
+                super().__init__(timeout=60)
+
+            async def _end(vself, interaction, result_text):
+                finished[0] = True
+                for item in vself.children: item.disabled = True
+                await interaction.response.edit_message(embed=make_embed(False, result_text), view=vself)
+
+            @discord.ui.button(label='Hit 🃏', style=discord.ButtonStyle.green)
+            async def hit(vself, interaction, button):
+                if interaction.user.id != msg.author.id:
+                    await interaction.response.send_message('To nie twoja gra!', ephemeral=True); return
+                ph.append(deck.pop())
+                pv = self._bj_val(ph)
+                if pv > 21:
+                    if bet: db.add_cash(msg.author.id, msg.guild.id, 0)  # already deducted
+                    await vself._end(interaction, f'💥 Bust! ({pv}). Przegrałeś{f" {bet} 🐾" if bet else ""}.')
+                elif pv == 21:
+                    await vself.stand.callback(vself, interaction, button)
+                else:
+                    await interaction.response.edit_message(embed=make_embed(), view=vself)
+
+            @discord.ui.button(label='Stand ✋', style=discord.ButtonStyle.red)
+            async def stand(vself, interaction, button):
+                if interaction.user.id != msg.author.id:
+                    await interaction.response.send_message('To nie twoja gra!', ephemeral=True); return
+                while self._bj_val(dh) < 17: dh.append(deck.pop())
+                pv, dv = self._bj_val(ph), self._bj_val(dh)
+                if dv > 21 or pv > dv:
+                    mult = 2.5 if pv == 21 and len(ph) == 2 else 2
+                    win = int(bet * mult) if bet else 0
+                    if bet: db.add_cash(msg.author.id, msg.guild.id, win)
+                    res = f'🎉 Wygrałeś{f" +{win} 🐾" if bet else ""}!{"(BJ ×2.5)" if mult==2.5 else ""}'
+                elif pv == dv:
+                    if bet: db.add_cash(msg.author.id, msg.guild.id, bet)
+                    res = '🤝 Remis! Stawka zwrócona.'
+                else:
+                    res = f'😔 Przegrałeś{f" {bet} 🐾" if bet else ""}. (krupier: {dv})'
+                await vself._end(interaction, res)
+
+            async def on_timeout(vself):
+                if not finished[0]:
+                    for item in vself.children: item.disabled = True
+
+        await msg.reply(embed=make_embed(), view=BJView(), mention_author=False)
+
+    async def _cmd_highlow(self, msg, args):
+        """Zgadnij czy następna liczba będzie wyższa czy niższa."""
+        current = random.randint(1, 100)
+        e = discord.Embed(title='🔢 High or Low?', color=BLURPLE)
+        e.description = f'Liczba to: **{current}**\nCzy następna będzie **wyższa** czy **niższa**?'
+        e.set_footer(text='Masz 30 sekund!')
+
+        finished = [False]
+
+        class HLView(discord.ui.View):
+            def __init__(vself): super().__init__(timeout=30)
+
+            async def _resolve(vself, interaction, guess):
+                if interaction.user.id != msg.author.id:
+                    await interaction.response.send_message('To nie twoja gra!', ephemeral=True); return
+                if finished[0]: return
+                finished[0] = True
+                nxt = random.randint(1, 100)
+                correct = (guess == 'high' and nxt > current) or (guess == 'low' and nxt < current)
+                reward = random.randint(20, 60) if correct else 0
+                if correct: db.add_cash(msg.author.id, msg.guild.id, reward)
+                for item in vself.children: item.disabled = True
+                color = GREEN if correct else RED
+                res = discord.Embed(title='🔢 High or Low?', color=color)
+                res.description = (
+                    f'Poprzednia: **{current}** → Następna: **{nxt}**\n'
+                    f'{"✅ Zgadłeś!" if correct else "❌ Nie zgadłeś."}'
+                    f'{f" +{reward} 🐾" if correct else ""}'
+                )
+                await interaction.response.edit_message(embed=res, view=vself)
+
+            @discord.ui.button(label='⬆️ Wyżej', style=discord.ButtonStyle.green)
+            async def high(vself, interaction, button): await vself._resolve(interaction, 'high')
+
+            @discord.ui.button(label='⬇️ Niżej', style=discord.ButtonStyle.red)
+            async def low(vself, interaction, button):  await vself._resolve(interaction, 'low')
+
+        await msg.reply(embed=e, view=HLView(), mention_author=False)
+
+    async def _cmd_scratch(self, msg, args):
+        """Zdrap los – postaw 30 🐾 żeby wygrać więcej."""
+        COST = 30
+        w = db.get_wallet(msg.author.id, msg.guild.id)
+        if w['cash'] < COST:
+            await msg.reply(embed=discord.Embed(
+                description=f'❌ Los kosztuje **{COST}** 🐾. Masz tylko **{int(w["cash"])}** 🐾.',
+                color=RED), mention_author=False); return
+        db.add_cash(msg.author.id, msg.guild.id, -COST)
+
+        SYM = ['🍒','🍒','🍒','🍋','🍋','⭐','⭐','💎','🍀','💰']
+        grid = [random.choice(SYM) for _ in range(9)]
+        # Check wins (3 in a row: rows + cols + diags)
+        lines = [
+            grid[0:3], grid[3:6], grid[6:9],
+            grid[0::3], grid[1::3], grid[2::3],
+            [grid[0],grid[4],grid[8]], [grid[2],grid[4],grid[6]]
+        ]
+        prizes = {'🍒':30,'🍋':50,'⭐':100,'🍀':200,'💎':500,'💰':1000}
+        won = 0
+        winning_sym = None
+        for line in lines:
+            if line[0] == line[1] == line[2]:
+                p = prizes.get(line[0], 0)
+                if p > won: won = p; winning_sym = line[0]
+
+        if won: db.add_cash(msg.author.id, msg.guild.id, won)
+        w2 = db.get_wallet(msg.author.id, msg.guild.id)
+        g = '\n'.join(' '.join(grid[i*3:(i+1)*3]) for i in range(3))
+        e = discord.Embed(title='🎟️ Los na Szczęście', color=GOLD if won else ORANGE)
+        e.description = f'```\n{g}\n```'
+        if won:
+            e.add_field(name='🎉 Wygrana!', value=f'{winning_sym} × 3 → **+{won} 🐾**', inline=True)
+        else:
+            e.add_field(name='😔 Brak wygranej', value=f'Straciłeś {COST} 🐾', inline=True)
+        e.add_field(name='💵 Gotówka', value=f'{int(w2["cash"])} 🐾', inline=True)
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_rps(self, msg, args):
+        """Kamień, papier, nożyce vs bot."""
+        if not args:
+            await msg.reply(embed=discord.Embed(
+                description='❌ `.rps <kamien|papier|nozyce>` lub `rock|paper|scissors`', color=RED),
+                mention_author=False); return
+        choices_map = {
+            'kamien':'rock','rock':'rock','k':'rock','r':'rock',
+            'papier':'paper','paper':'paper','p':'paper',
+            'nozyce':'scissors','scissors':'scissors','n':'scissors','s':'scissors',
+        }
+        user_choice = choices_map.get(args[0].lower())
+        if not user_choice:
+            await msg.reply(embed=discord.Embed(
+                description='❌ Użyj: `kamien`, `papier` lub `nozyce`', color=RED),
+                mention_author=False); return
+        bot_choice = random.choice(['rock','paper','scissors'])
+        emoji = {'rock':'🪨','paper':'📄','scissors':'✂️'}
+        names = {'rock':'Kamień','paper':'Papier','scissors':'Nożyce'}
+        wins = {('rock','scissors'),('paper','rock'),('scissors','paper')}
+        if user_choice == bot_choice:
+            color, result = YELLOW, '🤝 Remis!'
+        elif (user_choice, bot_choice) in wins:
+            color, result = GREEN, '🎉 Wygrałeś!'
+        else:
+            color, result = RED, '😔 Przegrałeś!'
+        e = discord.Embed(title='✊ Kamień Papier Nożyce', color=color)
+        e.add_field(name='👤 Ty', value=f'{emoji[user_choice]} {names[user_choice]}', inline=True)
+        e.add_field(name='🤖 Bot', value=f'{emoji[bot_choice]} {names[bot_choice]}', inline=True)
+        e.add_field(name='Wynik', value=f'**{result}**', inline=False)
+        await msg.reply(embed=e, mention_author=False)
+
+    # ══════════════════════════════════════════════════════════════════════════
     # MINIGRY EKONOMICZNE (Tatsu / Dank Memer style)
     # ══════════════════════════════════════════════════════════════════════════
 
@@ -1216,6 +1450,92 @@ class UserCog(commands.Cog):
     # ══════════════════════════════════════════════════════════════════════════
     # MISC FUN
     # ══════════════════════════════════════════════════════════════════════════
+
+    FACTS = [
+        'Mrówki nigdy nie śpią.', 'Ośmiornice mają trzy serca.',
+        'Miód nie psuje się — archeolodzy znajdowali 3000-letni jadalny miód.',
+        'Wzrok pszczoły sięga do ultrafioletu.', 'Banany są technicznie jagodami.',
+        'Krokodyle nie mogą wysunąć języka.', 'Serce krewetki mieści się w głowie.',
+        'Niedźwiedzie polarne mają przezroczystą sierść.', 'Słonie boją się pszczół.',
+        'Pingwiny proponują ukochanym kamień jako pierścionek zaręczynowy.',
+        'Kozy mają prostokątne źrenice.', 'Truskawki nie są jagodami botanicznie.',
+        'Delfiny nadają sobie imiona.', 'Kozy potrafią rozpoznawać ludzkie twarze.',
+        'Mrówkowiec nie ma zębów, je ok. 35 000 mrówek dziennie.',
+    ]
+
+    async def _cmd_fact(self, msg, args):
+        e = discord.Embed(title='💡 Ciekawostka', description=random.choice(self.FACTS), color=BLURPLE)
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_ship(self, msg, args):
+        if len(args) >= 2:
+            m1 = self._resolve_member(msg, args[0])
+            m2 = self._resolve_member(msg, args[1])
+            n1 = m1.display_name if m1 else args[0]
+            n2 = m2.display_name if m2 else args[1]
+        elif len(args) == 1:
+            m1 = self._resolve_member(msg, args[0])
+            n1 = m1.display_name if m1 else args[0]
+            n2 = msg.author.display_name
+        else:
+            await msg.reply(embed=discord.Embed(description='❌ `.ship @user1 [@user2]`', color=RED),
+                            mention_author=False); return
+        seed = abs(hash(n1.lower() + n2.lower())) % 101
+        bar_filled = round(seed / 10)
+        bar = '💗' * bar_filled + '🖤' * (10 - bar_filled)
+        if seed >= 85: label = '💘 Idealna para!'
+        elif seed >= 60: label = '💕 Bardzo dobrana!'
+        elif seed >= 40: label = '💛 Może być...'
+        elif seed >= 20: label = '🤍 Słaby sygnał...'
+        else: label = '💔 Chyba nie...'
+        name = n1[:len(n1)//2] + n2[len(n2)//2:]
+        e = discord.Embed(title=f'💘 Shipowanie: {n1} & {n2}', color=PURPLE)
+        e.add_field(name='Imię shipowe', value=f'**{name}**', inline=True)
+        e.add_field(name='Wynik', value=f'**{seed}%** {label}', inline=True)
+        e.add_field(name='Pasek miłości', value=bar, inline=False)
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_rate(self, msg, args):
+        if not args:
+            await msg.reply(embed=discord.Embed(description='❌ `.rate <cokolwiek>`', color=RED),
+                            mention_author=False); return
+        thing = ' '.join(args)
+        score = abs(hash(thing.lower())) % 101
+        bar_filled = round(score / 10)
+        bar = '🟩' * bar_filled + '⬛' * (10 - bar_filled)
+        if score >= 90: verdict = 'Absolutnie niesamowite!'
+        elif score >= 70: verdict = 'Całkiem dobre!'
+        elif score >= 50: verdict = 'Może być...'
+        elif score >= 30: verdict = 'Słabe to.'
+        else: verdict = 'Tragedia.'
+        e = discord.Embed(title=f'⭐ Ocena: {thing}', color=GOLD)
+        e.add_field(name='Wynik', value=f'**{score}/100** — {verdict}', inline=False)
+        e.add_field(name='Pasek', value=bar, inline=False)
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_reverse(self, msg, args):
+        if not args:
+            await msg.reply(embed=discord.Embed(description='❌ `.reverse <tekst>`', color=RED),
+                            mention_author=False); return
+        text = ' '.join(args)
+        e = discord.Embed(title='🔄 Odwrócony tekst', color=BLURPLE)
+        e.add_field(name='Oryginał', value=text, inline=False)
+        e.add_field(name='Odwrócony', value=text[::-1], inline=False)
+        await msg.reply(embed=e, mention_author=False)
+
+    async def _cmd_upper(self, msg, args):
+        if not args:
+            await msg.reply(embed=discord.Embed(description='❌ `.upper <tekst>`', color=RED),
+                            mention_author=False); return
+        await msg.reply(embed=discord.Embed(description=f'🔠 **{" ".join(args).upper()}**', color=BLURPLE),
+                        mention_author=False)
+
+    async def _cmd_lower(self, msg, args):
+        if not args:
+            await msg.reply(embed=discord.Embed(description='❌ `.lower <tekst>`', color=RED),
+                            mention_author=False); return
+        await msg.reply(embed=discord.Embed(description=f'🔡 {" ".join(args).lower()}', color=BLURPLE),
+                        mention_author=False)
 
     JOKES = [
         ('Dlaczego programista nie wyszedł z domu?', 'Bo nie miał okna (Windows).'),

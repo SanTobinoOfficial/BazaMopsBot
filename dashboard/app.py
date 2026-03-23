@@ -657,6 +657,75 @@ def execute_command(guild_id):
         if e2: return err(f'Discord API: {e2}')
         return ok('Ogłoszenie wysłane.')
 
+    # ── DEAFEN / UNDEAFEN ─────────────────────────────────────────────────────
+    if cmd == 'deafen':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        data2, e2 = _dpatch(f'/guilds/{guild_id}/members/{uid}', {'deaf': True})
+        if e2: return err(f'Discord API: {e2}')
+        return ok('Użytkownik ogłuszony (server deafen).')
+
+    if cmd == 'undeafen':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        data2, e2 = _dpatch(f'/guilds/{guild_id}/members/{uid}', {'deaf': False})
+        if e2: return err(f'Discord API: {e2}')
+        return ok('Użytkownik odogłuszony.')
+
+    # ── TEMPBAN ───────────────────────────────────────────────────────────────
+    if cmd == 'tempban':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        if not duration: return err('Podaj czas bana (np. 1d, 7d).')
+        secs = _parse_dur_seconds(duration)
+        if not secs: return err('Nieprawidłowy czas.')
+        data2, e2 = _dpost(f'/guilds/{guild_id}/bans/{uid}',
+                           {'delete_message_days': 0, 'reason': f'Tempban {duration}: {reason}'})
+        if e2:
+            _dput(f'/guilds/{guild_id}/bans/{uid}')
+        db.ensure_user(uid, guild_id)
+        db.update_user(uid, guild_id, is_banned=1)
+        # Schedule unban via reminder-style DB entry (bot will process)
+        from datetime import datetime, timedelta
+        unban_at = (datetime.now() + timedelta(seconds=secs)).isoformat()
+        db.add_reminder(0, guild_id, 0, f'__UNBAN__{uid}', unban_at)
+        return ok(f'Tempban {duration} ustawiony. Automatyczny unban o {unban_at[:16]}.')
+
+    # ── NOTE (add admin note) ─────────────────────────────────────────────────
+    if cmd == 'addnote':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        if not note: return err('Wpisz treść notatki.')
+        db.ensure_user(uid, guild_id)
+        with db._lock:
+            with db._get_conn() as conn:
+                conn.execute('INSERT INTO notes (user_id, guild_id, content, author_id) VALUES (?,?,?,?)',
+                             (uid, guild_id, note, 0))
+                conn.commit()
+        return ok(f'Notatka dodana do użytkownika.')
+
+    # ── LEADERBOARD BAN/UNBAN (not Discord ban) ───────────────────────────────
+    if cmd == 'lbban':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        db.ensure_user(uid, guild_id)
+        db.update_user(uid, guild_id, is_banned=1)
+        return ok('Użytkownik zablokowany na liście rankingowej.')
+
+    if cmd == 'lbunban':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        db.update_user(uid, guild_id, is_banned=0)
+        return ok('Użytkownik odblokowany z listy rankingowej.')
+
+    # ── CLEAR WARN POINTS ─────────────────────────────────────────────────────
+    if cmd == 'clearwarnpoints':
+        uid = _uid()
+        if not uid: return err('Wybierz użytkownika.')
+        db.ensure_user(uid, guild_id)
+        db.update_user(uid, guild_id, warn_points=0)
+        return ok('Warn points wyzerowane.')
+
     return err(f'Nieznana komenda: {cmd}')
 
 
