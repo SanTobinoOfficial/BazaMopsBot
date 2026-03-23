@@ -492,13 +492,13 @@ CMD_TABS = {
             {'cmd': 'transfer', 'icon': 'bi-arrow-left-right','label': 'Przelew',     'desc': 'Wyślij mopsy innemu', 'arg': True, 'placeholder': '@nick kwota'},
         ],
         'Sklep': [
-            {'cmd': 'shop',  'icon': 'bi-shop',           'label': 'Sklep',    'desc': 'Lista dostępnych przedmiotów'},
-            {'cmd': 'buy',   'icon': 'bi-bag-check',      'label': 'Kup',      'desc': 'Kup przedmiot ze sklepu', 'arg': True, 'placeholder': 'Nazwa przedmiotu'},
-            {'cmd': 'daily', 'icon': 'bi-gift',           'label': 'Daily',    'desc': 'Dzienna nagroda (co 24h)'},
-            {'cmd': 'beg',  'icon': 'bi-hand-thumbs-up', 'label': 'Żebranie',  'desc': 'Żebraj o mopsy (cooldown 30min)'},
-            {'cmd': 'eco',  'icon': 'bi-bar-chart',      'label': 'Mopsy LB',  'desc': 'Ranking mopsów'},
-            {'cmd': 'rep',  'icon': 'bi-star',           'label': 'Rep',       'desc': 'Daj komuś reputację', 'arg': True, 'placeholder': '@nick'},
-            {'cmd': 'work',  'icon': 'bi-briefcase',      'label': 'Praca',    'desc': 'Zarabiaj mopsy (cooldown 1h)'},
+            {'cmd': 'shop',      'icon': 'bi-shop',              'label': 'Sklep',      'desc': 'Przeglądaj i kupuj przedmioty'},
+            {'cmd': 'inventory', 'icon': 'bi-backpack',          'label': 'Plecak',     'desc': 'Twoje kupione przedmioty'},
+            {'cmd': 'daily',     'icon': 'bi-gift',              'label': 'Daily',      'desc': 'Dzienna nagroda (co 24h)'},
+            {'cmd': 'beg',       'icon': 'bi-hand-thumbs-up',    'label': 'Żebranie',   'desc': 'Żebraj o mopsy (cooldown 30min)'},
+            {'cmd': 'eco',       'icon': 'bi-bar-chart',         'label': 'Mopsy LB',   'desc': 'Ranking mopsów'},
+            {'cmd': 'rep',       'icon': 'bi-star',              'label': 'Rep',        'desc': 'Daj komuś reputację', 'arg': True, 'placeholder': '@nick'},
+            {'cmd': 'work',      'icon': 'bi-briefcase',         'label': 'Praca',      'desc': 'Zarabiaj mopsy (cooldown 1h)'},
         ],
         'Aktywności': [
             {'cmd': 'fish',  'icon': 'bi-water',          'label': 'Wędkowanie', 'desc': 'Łów ryby (cooldown 45min)'},
@@ -936,9 +936,43 @@ def user_run_command(guild_id):
             'title': '🏹 Polowanie', 'description': msg})
 
     if cmd == 'shop':
-        return jsonify({'ok': True, 'type': 'embed', 'color': '#faa61a',
-            'title': '🛒 Sklep',
-            'description': 'Sklep konfiguruje admin. Użyj `.shop` na Discordzie.'})
+        db.seed_default_shop(guild_id)
+        items = db.get_shop_items(guild_id)
+        inv = db.get_user_inventory(uid, guild_id)
+        owned_ids = {i['item_id']: i['quantity'] for i in inv}
+        items_out = []
+        for it in items:
+            items_out.append({
+                'id': it['id'], 'name': it['name'], 'icon': it['icon'],
+                'description': it['description'], 'price': it['price'],
+                'stock': it['stock'], 'item_type': it['item_type'],
+                'owned': owned_ids.get(it['id'], 0),
+            })
+        return jsonify({'ok': True, 'type': 'shop',
+            'items': items_out, 'cash': int(wallet.get('cash') or 0)})
+
+    if cmd == 'buy':
+        if not arg:
+            return jsonify({'ok': False, 'message': 'Użycie: wpisz nazwę przedmiotu lub kliknij "Kup" w sklepie.'})
+        item = db.get_shop_item_by_name(guild_id, arg)
+        if not item:
+            return jsonify({'ok': False, 'message': f'Nie znaleziono przedmiotu: "{arg}"'})
+        result = db.buy_shop_item(uid, guild_id, item['id'])
+        if not result['ok']:
+            return jsonify({'ok': False, 'message': result['message']})
+        it = result['item']
+        w2 = db.get_wallet(uid, guild_id)
+        return jsonify({'ok': True, 'type': 'buy_result',
+            'item_name': it['name'], 'item_icon': it['icon'],
+            'price': it['price'], 'cash_left': int(w2.get('cash') or 0),
+            'message': f'Kupiono **{it["icon"]} {it["name"]}** za **{it["price"]} 🐾**!'})
+
+    if cmd in ('inventory', 'inv', 'plecak'):
+        inv = db.get_user_inventory(uid, guild_id)
+        return jsonify({'ok': True, 'type': 'inventory',
+            'items': [{'name': i['name'], 'icon': i['icon'], 'quantity': i['quantity'],
+                       'description': i['description'], 'item_type': i['item_type']} for i in inv],
+            'username': session.get('discord_username', '')})
 
     # ── Gry / Kasyno ─────────────────────────────────────────────────────────
     if cmd == 'slots':

@@ -384,6 +384,28 @@ def _run_migrations(conn):
         # Admin permission tiers: mod < officer < admin
         "ALTER TABLE guilds ADD COLUMN mod_role_ids     TEXT DEFAULT '[]'",
         "ALTER TABLE guilds ADD COLUMN officer_role_ids TEXT DEFAULT '[]'",
+        # Shop system
+        """CREATE TABLE IF NOT EXISTS shop_items (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id    INTEGER NOT NULL,
+            name        TEXT    NOT NULL,
+            icon        TEXT    DEFAULT '🛒',
+            description TEXT    DEFAULT '',
+            price       INTEGER NOT NULL DEFAULT 100,
+            stock       INTEGER DEFAULT NULL,
+            item_type   TEXT    DEFAULT 'cosmetic',
+            data        TEXT    DEFAULT '{}',
+            is_active   INTEGER DEFAULT 1,
+            created_at  TEXT    DEFAULT (datetime('now')),
+            UNIQUE(guild_id, name))""",
+        """CREATE TABLE IF NOT EXISTS user_inventory (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            guild_id    INTEGER NOT NULL,
+            item_id     INTEGER NOT NULL,
+            quantity    INTEGER DEFAULT 1,
+            acquired_at TEXT    DEFAULT (datetime('now')),
+            UNIQUE(user_id, guild_id, item_id))""",
     ]
     for m in migrations:
         try:
@@ -2182,3 +2204,133 @@ def force_reseed_permissions(guild_id: int) -> int:
                 'DELETE FROM rank_command_permissions WHERE guild_id=?', (guild_id,))
             conn.commit()
     return 0
+
+
+# ─── Shop ─────────────────────────────────────────────────────────────────────
+
+def get_shop_items(guild_id: int, active_only: bool = True) -> List[Dict]:
+    q = 'SELECT * FROM shop_items WHERE guild_id=?'
+    if active_only:
+        q += ' AND is_active=1'
+    q += ' ORDER BY price ASC'
+    with _get_conn() as conn:
+        return [dict(r) for r in conn.execute(q, (guild_id,)).fetchall()]
+
+
+def get_shop_item(item_id: int) -> Optional[Dict]:
+    with _get_conn() as conn:
+        r = conn.execute('SELECT * FROM shop_items WHERE id=?', (item_id,)).fetchone()
+        return dict(r) if r else None
+
+
+def get_shop_item_by_name(guild_id: int, name: str) -> Optional[Dict]:
+    with _get_conn() as conn:
+        r = conn.execute(
+            'SELECT * FROM shop_items WHERE guild_id=? AND LOWER(name)=LOWER(?)',
+            (guild_id, name)).fetchone()
+        return dict(r) if r else None
+
+
+def create_shop_item(guild_id: int, name: str, price: int, icon: str = '🛒',
+                     description: str = '', item_type: str = 'cosmetic',
+                     stock: int = None, data: dict = None) -> Optional[Dict]:
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute(
+                'INSERT OR IGNORE INTO shop_items (guild_id, name, price, icon, description, item_type, stock, data) '
+                'VALUES (?,?,?,?,?,?,?,?)',
+                (guild_id, name, price, icon, description, item_type, stock,
+                 json.dumps(data or {})))
+            conn.commit()
+    return get_shop_item_by_name(guild_id, name)
+
+
+def update_shop_item(item_id: int, **kwargs) -> None:
+    allowed = {'name', 'price', 'icon', 'description', 'item_type', 'stock', 'data', 'is_active'}
+    cols = {k: v for k, v in kwargs.items() if k in allowed}
+    if not cols:
+        return
+    sets = ', '.join(f'{k}=?' for k in cols)
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute(f'UPDATE shop_items SET {sets} WHERE id=?',
+                         list(cols.values()) + [item_id])
+            conn.commit()
+
+
+def delete_shop_item(item_id: int) -> None:
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute('DELETE FROM shop_items WHERE id=?', (item_id,))
+            conn.commit()
+
+
+def buy_shop_item(user_id: int, guild_id: int, item_id: int) -> dict:
+    """
+    Attempt to purchase item. Returns {'ok': bool, 'message': str}.
+    Decrements stock if limited, deducts cash, adds to inventory.
+    """
+    with _lock:
+        with _get_conn() as conn:
+            item = conn.execute('SELECT * FROM shop_items WHERE id=? AND guild_id=? AND is_active=1',
+                                (item_id, guild_id)).fetchone()
+            if not item:
+                return {'ok': False, 'message': 'Przedmiot nie istnieje lub jest niedostępny.'}
+            item = dict(item)
+            # Check stock
+            if item['stock'] is not None and item['stock'] <= 0:
+                return {'ok': False, 'message': 'Brak w magazynie!'}
+            # Check cash
+            wallet = conn.execute(
+                'SELECT cash FROM users WHERE user_id=? AND guild_id=?',
+                (user_id, guild_id)).fetchone()
+            cash = wallet['cash'] if wallet else 0
+            if cash < item['price']:
+                return {'ok': False, 'message': f'Za mało mopsów! Masz {int(cash)} 🐾, potrzebujesz {item["price"]} 🐾.'}
+            # Deduct cash
+            conn.execute(
+                'UPDATE users SET cash=cash-? WHERE user_id=? AND guild_id=?',
+                (item['price'], user_id, guild_id))
+            # Decrement stock
+            if item['stock'] is not None:
+                conn.execute('UPDATE shop_items SET stock=stock-1 WHERE id=?', (item_id,))
+            # Add to inventory
+            conn.execute(
+                '''INSERT INTO user_inventory (user_id, guild_id, item_id, quantity)
+                   VALUES (?,?,?,1)
+                   ON CONFLICT(user_id, guild_id, item_id) DO UPDATE SET quantity=quantity+1''',
+                (user_id, guild_id, item_id))
+            conn.commit()
+    return {'ok': True, 'item': item}
+
+
+def get_user_inventory(user_id: int, guild_id: int) -> List[Dict]:
+    with _get_conn() as conn:
+        rows = conn.execute(
+            '''SELECT ui.*, si.name, si.icon, si.description, si.item_type, si.price, si.data
+               FROM user_inventory ui
+               JOIN shop_items si ON si.id = ui.item_id
+               WHERE ui.user_id=? AND ui.guild_id=?
+               ORDER BY ui.acquired_at DESC''',
+            (user_id, guild_id)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def seed_default_shop(guild_id: int) -> int:
+    """Create starter shop items if shop is empty."""
+    existing = get_shop_items(guild_id, active_only=False)
+    if existing:
+        return 0
+    defaults = [
+        {'name': 'VIP Tag',      'price': 500,  'icon': '👑', 'description': 'Ekskluzywny tag VIP na profilu',    'item_type': 'cosmetic'},
+        {'name': 'XP Boost x2', 'price': 300,  'icon': '⚡', 'description': 'Podwójna ilość punktów przez 1h',    'item_type': 'boost'},
+        {'name': 'Mopsy Luck',  'price': 200,  'icon': '🍀', 'description': '+20% szans na wygraną w kasynach',   'item_type': 'boost'},
+        {'name': 'Mikstura HP', 'price': 150,  'icon': '🧪', 'description': '+50 mopsów na starcie następnej gry','item_type': 'consumable'},
+        {'name': 'Rybka Złota', 'price': 1000, 'icon': '🐠', 'description': 'Rzadka rybka do kolekcji (limitowana!)', 'item_type': 'cosmetic', 'stock': 10},
+        {'name': 'Miecz Króla', 'price': 2500, 'icon': '⚔️', 'description': 'Symbol władzy — prestiżowy przedmiot', 'item_type': 'cosmetic', 'stock': 3},
+    ]
+    for d in defaults:
+        create_shop_item(guild_id, d['name'], d['price'], icon=d['icon'],
+                         description=d['description'], item_type=d['item_type'],
+                         stock=d.get('stock'))
+    return len(defaults)

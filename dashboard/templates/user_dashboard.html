@@ -627,6 +627,10 @@ function showResult(data) {
   if (t === 'trivia')         { renderTrivia(data);        return; }
   if (t === 'trivia_result')  { renderTriviaResult(data);  return; }
   if (t === 'avatar')         { renderAvatar(data);        return; }
+  if (t === 'shop')           { renderShop(data);          return; }
+  if (t === 'buy_result')     { renderBuyResult(data);     return; }
+  if (t === 'inventory')      { renderInventory(data);     return; }
+  if (t === 'text')           { renderText(data);          return; }
   // embed
   let h = `<div class="result-embed" style="border-left:4px solid ${data.color||'#7289da'}">`;
   if (data.title)       h += `<div class="fw-bold text-white mb-1">${esc(data.title)}</div>`;
@@ -938,6 +942,117 @@ function renderAvatar(data) {
   inner.innerHTML = data.url
     ? `<div class="text-center py-2"><img src="${data.url}" style="border-radius:50%;width:120px;height:120px;border:3px solid var(--discord-blue)" alt="${esc(data.name)}"><div class="text-white mt-2 fw-bold">${esc(data.name)}</div></div>`
     : `<div class="text-muted text-center py-3">Brak avatara (zaloguj się przez Discord)</div>`;
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+// ── Text (mod panel + simple messages) ──
+function renderText(data) {
+  const inner = document.getElementById('result-inner');
+  // Convert **bold** and newlines to HTML
+  const md = esc(data.message||'').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>');
+  inner.innerHTML = `<div class="result-embed" style="border-left:4px solid #7289da;white-space:normal">${md}</div>`;
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+// ── Shop ──
+function renderShop(data) {
+  const inner = document.getElementById('result-inner');
+  const typeColor = {cosmetic:'#9b59b6',boost:'#f1c40f',consumable:'#e67e22',role:'#3498db'};
+  const typeLabel = {cosmetic:'Kosmetyczny',boost:'Boost',consumable:'Jednorazowy',role:'Rola'};
+  let h = `<div>
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <span class="fw-bold text-white" style="font-size:1rem">🛒 Sklep MOPS</span>
+      <span class="badge" style="background:rgba(250,166,26,.2);color:#faa61a">💰 Twoje mopsy: <strong>${data.cash}</strong> 🐾</span>
+    </div>
+    <div class="row g-2">`;
+  if (!data.items || !data.items.length) {
+    h += `<div class="col-12 text-muted text-center py-3">Sklep jest pusty. Admin może dodać przedmioty.</div>`;
+  }
+  for (const it of (data.items||[])) {
+    const tc = typeColor[it.item_type]||'#99aab5';
+    const tl = typeLabel[it.item_type]||it.item_type;
+    const canAfford = data.cash >= it.price;
+    const stockTxt = it.stock !== null ? `<span class="badge bg-secondary ms-1" style="font-size:.55rem">Szt: ${it.stock}</span>` : '';
+    const ownedTxt = it.owned ? `<span class="badge ms-1" style="font-size:.55rem;background:rgba(67,181,129,.2);color:#43b581">Posiadasz: ${it.owned}</span>` : '';
+    h += `<div class="col-6 col-md-4">
+      <div class="card h-100 p-2" style="border-color:${tc}33;background:#1e2124">
+        <div class="text-center fs-3 mb-1">${esc(it.icon)}</div>
+        <div class="fw-bold text-white text-center" style="font-size:.85rem">${esc(it.name)}</div>
+        <div class="text-muted text-center mb-1" style="font-size:.72rem">${esc(it.description)}</div>
+        <div class="d-flex justify-content-center align-items-center gap-1 flex-wrap mb-2">
+          <span class="badge" style="background:${tc}22;color:${tc};font-size:.6rem">${tl}</span>
+          ${stockTxt}${ownedTxt}
+        </div>
+        <div class="text-center fw-bold mb-2" style="color:#faa61a;font-size:.9rem">${it.price} 🐾</div>
+        <button class="btn btn-sm w-100 shop-buy-btn"
+                data-item="${esc(it.name)}"
+                style="background:${canAfford?'rgba(67,181,129,.2)':'rgba(99,99,99,.15)'};color:${canAfford?'#43b581':'#666'};border:1px solid ${canAfford?'#43b58144':'#44444488'}"
+                ${canAfford?'':'disabled'}>
+          ${canAfford?'🛒 Kup':'💸 Za drogi'}
+        </button>
+      </div>
+    </div>`;
+  }
+  h += '</div></div>';
+  inner.innerHTML = h;
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+  // Buy button handlers
+  inner.querySelectorAll('.shop-buy-btn').forEach(btn => {
+    btn.addEventListener('click', async function() {
+      const itemName = this.dataset.item;
+      const orig = this.innerHTML; this.disabled = true;
+      this.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+      try {
+        const r = await fetch(RUN_URL, {method:'POST', credentials:'same-origin',
+          headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
+          body: JSON.stringify({action:'buy', args:itemName})});
+        showResult(await r.json());
+      } catch(e) { showResult({ok:false, message:'Błąd sieci: '+e.message}); }
+    });
+  });
+}
+
+// ── Buy result ──
+function renderBuyResult(data) {
+  const inner = document.getElementById('result-inner');
+  inner.innerHTML = `<div class="text-center py-3">
+    <div style="font-size:2.5rem;margin-bottom:.5rem">${esc(data.item_icon)}</div>
+    <div class="fw-bold text-white mb-1" style="font-size:1.1rem">${esc(data.item_name)}</div>
+    <div class="text-success mb-2">✅ Kupiono za <strong>${data.price} 🐾</strong></div>
+    <div class="text-muted" style="font-size:.85rem">Pozostało: <strong>${data.cash_left} 🐾</strong></div>
+    <button class="btn btn-sm mt-3" style="background:rgba(114,137,218,.2);color:#7289da"
+            onclick="document.querySelector('[data-cmd=shop]')?.closest('.cmd-card')?.querySelector('.use-btn')?.click()">
+      🛒 Wróć do sklepu
+    </button>
+  </div>`;
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+// ── Inventory ──
+function renderInventory(data) {
+  const inner = document.getElementById('result-inner');
+  const typeColor = {cosmetic:'#9b59b6',boost:'#f1c40f',consumable:'#e67e22',role:'#3498db'};
+  let h = `<div>
+    <div class="fw-bold text-white mb-3">🎒 Plecak – ${esc(data.username)}</div>`;
+  if (!data.items || !data.items.length) {
+    h += `<div class="text-muted text-center py-3">Plecak jest pusty! Kup coś w sklepie 🛒</div>`;
+  } else {
+    h += '<div class="row g-2">';
+    for (const it of data.items) {
+      const tc = typeColor[it.item_type]||'#99aab5';
+      h += `<div class="col-6 col-md-4">
+        <div class="card p-2 text-center" style="border-color:${tc}33;background:#1e2124">
+          <div style="font-size:2rem">${esc(it.icon)}</div>
+          <div class="fw-bold text-white" style="font-size:.85rem">${esc(it.name)}</div>
+          <div class="text-muted" style="font-size:.72rem">${esc(it.description)}</div>
+          <div class="badge mt-1" style="background:${tc}22;color:${tc};font-size:.6rem">x${it.quantity}</div>
+        </div>
+      </div>`;
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+  inner.innerHTML = h;
   document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
 }
 
