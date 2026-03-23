@@ -614,6 +614,478 @@ def user_dashboard(guild_id):
                f'</pre>', 500
 
 
+# ─── User command runner (browser-side execution) ─────────────────────────────
+
+@app.route('/guild/<int:guild_id>/me/run', methods=['POST'])
+@any_login_required
+def user_run_command(guild_id):
+    import random as _rnd
+    data = request.get_json() or {}
+    cmd  = data.get('action', '').strip()
+    arg  = (data.get('args') or '').strip()
+    uid  = _session_discord_id()
+
+    if not uid:
+        return jsonify({'ok': False, 'message': 'Zaloguj się przez Discord żeby używać komend.'})
+
+    db.ensure_guild(guild_id)
+    db.ensure_user(uid, guild_id)
+
+    if not db.check_user_command_permission(uid, guild_id, cmd):
+        return jsonify({'ok': False, 'message': f'Twoja ranga nie ma dostępu do komendy .{cmd}.'})
+
+    user    = db.get_user(uid, guild_id) or {}
+    wallet  = db.get_wallet(uid, guild_id)
+
+    def _cooldown(col, minutes):
+        last = user.get(col)
+        if not last:
+            return True, 0
+        try:
+            from datetime import datetime as _dt
+            elapsed = (_dt.now() - _dt.fromisoformat(last)).total_seconds()
+            left = minutes * 60 - elapsed
+            return left <= 0, max(0, int(left))
+        except Exception:
+            return True, 0
+
+    def _fmt(s):
+        if s < 60: return f'{s}s'
+        if s < 3600: return f'{s//60}m {s%60}s'
+        return f'{s//3600}h {(s%3600)//60}m'
+
+    # ── Profil ────────────────────────────────────────────────────────────────
+    if cmd == 'points':
+        pts = user.get('points', 0) or 0
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#7289da',
+            'title': '⭐ Twoje punkty',
+            'fields': [{'name': 'Punkty', 'value': f'**{pts:.1f}**'}]})
+
+    if cmd in ('rank', 'level'):
+        auto = db.get_user_auto_rank(uid, guild_id)
+        nxt  = db.get_user_next_rank(uid, guild_id)
+        pts  = user.get('points', 0) or 0
+        progress = 0
+        if auto and nxt:
+            span = (nxt.get('required_points', 1) - auto.get('required_points', 0)) or 1
+            progress = min(100, int((pts - auto.get('required_points', 0)) / span * 100))
+        return jsonify({'ok': True, 'type': 'rank',
+            'rank': auto.get('name', '—') if auto else '—',
+            'rank_icon': auto.get('icon', '') if auto else '',
+            'next': nxt.get('name', '') if nxt else '',
+            'next_pts': nxt.get('required_points', 0) if nxt else 0,
+            'pts': pts, 'progress': progress})
+
+    if cmd == 'profile':
+        auto = db.get_user_auto_rank(uid, guild_id)
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#7289da',
+            'title': '👤 Profil',
+            'fields': [
+                {'name': 'Ranga',   'value': f'{auto.get("icon","")} {auto.get("name","—")}' if auto else '—'},
+                {'name': 'Punkty',  'value': f'{user.get("points",0):.1f}'},
+                {'name': 'Sesje',   'value': str(user.get('sessions_count', 0))},
+                {'name': 'Łącznie', 'value': f'{user.get("total_hours",0):.1f} h'},
+                {'name': 'Streak',  'value': f'{user.get("streak_days",0)} dni'},
+            ]})
+
+    if cmd == 'history':
+        txs = db.get_user_transactions(uid, guild_id, limit=10)
+        if not txs:
+            return jsonify({'ok': True, 'type': 'embed', 'color': '#99aab5',
+                'title': '📋 Historia', 'description': 'Brak transakcji.'})
+        rows = [f'`{t.get("created_at","")[:10]}` '
+                f'{"+" if (t.get("amount") or 0) > 0 else ""}{t.get("amount",0):.1f} — {t.get("note","?")}' for t in txs]
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#7289da',
+            'title': '📋 Historia punktów', 'description': '\n'.join(rows)})
+
+    if cmd == 'lb':
+        lb = db.get_leaderboard(guild_id, limit=10)
+        rows = [f'**{i+1}.** {r.get("display_name") or r.get("username","?")} — {r.get("points",0):.1f} pkt'
+                for i, r in enumerate(lb)]
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#faa61a',
+            'title': '🏆 Top 10 — Punkty', 'description': '\n'.join(rows) or 'Brak danych'})
+
+    # ── Ekonomia ─────────────────────────────────────────────────────────────
+    if cmd == 'balance':
+        total = (wallet.get('cash') or 0) + (wallet.get('bank') or 0)
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#faa61a',
+            'title': '💰 Portfel',
+            'fields': [
+                {'name': '💵 Gotówka', 'value': f'{int(wallet.get("cash",0))} 🐾'},
+                {'name': '🏦 Bank',    'value': f'{int(wallet.get("bank",0))} 🐾'},
+                {'name': '📊 Łącznie', 'value': f'{int(total)} 🐾'},
+            ]})
+
+    if cmd == 'deposit':
+        cash = int(wallet.get('cash') or 0)
+        amt  = cash if arg.lower() == 'all' else (int(arg) if arg.isdigit() else None)
+        if amt is None or amt <= 0:
+            return jsonify({'ok': False, 'message': 'Podaj kwotę lub "all".'})
+        if not db.deposit_cash(uid, guild_id, amt):
+            return jsonify({'ok': False, 'message': f'Nie masz tyle gotówki! Masz {cash} 🐾.'})
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#43b581',
+            'title': '🏦 Wpłata', 'description': f'Wpłacono **{amt} 🐾** do banku.'})
+
+    if cmd == 'withdraw':
+        bank = int(wallet.get('bank') or 0)
+        amt  = bank if arg.lower() == 'all' else (int(arg) if arg.isdigit() else None)
+        if amt is None or amt <= 0:
+            return jsonify({'ok': False, 'message': 'Podaj kwotę lub "all".'})
+        if not db.withdraw_cash(uid, guild_id, amt):
+            return jsonify({'ok': False, 'message': f'Nie masz tyle w banku! Masz {bank} 🐾.'})
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#43b581',
+            'title': '💵 Wypłata', 'description': f'Wypłacono **{amt} 🐾** z banku.'})
+
+    if cmd == 'transfer':
+        parts = arg.split()
+        if len(parts) < 2:
+            return jsonify({'ok': False, 'message': 'Użycie: nick kwota (np. Jan 100)'})
+        amt_str = parts[-1]
+        if not amt_str.isdigit():
+            return jsonify({'ok': False, 'message': 'Podaj prawidłową kwotę.'})
+        amt = int(amt_str)
+        target_name = ' '.join(parts[:-1]).lstrip('@')
+        all_users = db.get_all_users(guild_id)
+        target = next((u for u in all_users if (u.get('display_name') or u.get('username','')) == target_name), None)
+        if not target:
+            return jsonify({'ok': False, 'message': f'Nie znaleziono użytkownika "{target_name}".'})
+        if not db.transfer_cash(uid, int(target['user_id']), guild_id, amt):
+            return jsonify({'ok': False, 'message': f'Niewystarczające środki! Masz {int(wallet.get("cash",0))} 🐾.'})
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#43b581',
+            'title': '💸 Przelew', 'description': f'Wysłano **{amt} 🐾** do **{target_name}**.'})
+
+    if cmd == 'daily':
+        ok_cd, left = _cooldown('daily_last', 1440)
+        if not ok_cd:
+            return jsonify({'ok': False, 'message': f'Już odebrałeś dzienną nagrodę! Następna za {_fmt(left)}.'})
+        streak = (user.get('streak_days') or 0) + 1
+        base = _rnd.randint(50, 150)
+        bonus = min(streak * 5, 100)
+        earn = int((base + bonus) * db.get_event_multiplier(guild_id, 'mopsy'))
+        db.add_cash(uid, guild_id, earn)
+        db.set_cooldown(uid, guild_id, 'daily_last')
+        db.update_user(uid, guild_id, streak_days=streak)
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#43b581',
+            'title': '🎁 Dzienna nagroda!',
+            'description': f'Otrzymujesz **{earn} 🐾**\nStreak: **{streak}** dni 🔥'})
+
+    if cmd == 'work':
+        ok_cd, left = _cooldown('work_last', 60)
+        if not ok_cd:
+            return jsonify({'ok': False, 'message': f'Jesteś zmęczony! Odpocznij {_fmt(left)}.'})
+        jobs = ['Dostarczyłeś pizzę','Naprawiłeś komputer','Posprzątałeś biuro','Pisałeś kod','Prowadziłeś samochód']
+        earn = int(_rnd.randint(30, 80) * db.get_event_multiplier(guild_id, 'mopsy'))
+        db.add_cash(uid, guild_id, earn)
+        db.set_cooldown(uid, guild_id, 'work_last')
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#43b581',
+            'title': '💼 Praca!', 'description': f'{_rnd.choice(jobs)} i zarobiłeś **{earn} 🐾**'})
+
+    if cmd == 'fish':
+        ok_cd, left = _cooldown('fish_last', 45)
+        if not ok_cd:
+            return jsonify({'ok': False, 'message': f'Wędka musi odpocząć! {_fmt(left)}.'})
+        catches = [('🐟 Karasia',20,60),('🐠 Rybkę tropikalną',40,90),('🦈 Rekina',100,200),
+                   ('🥾 But',0,0),('🐙 Ośmiornicę',60,120)]
+        name, lo, hi = _rnd.choice(catches)
+        earn = int(_rnd.randint(lo, hi) * db.get_event_multiplier(guild_id, 'mopsy')) if hi > 0 else 0
+        if earn > 0:
+            db.add_cash(uid, guild_id, earn)
+        db.set_cooldown(uid, guild_id, 'fish_last')
+        msg = f'Złowiłeś **{name}** i sprzedałeś za **{earn} 🐾**!' if earn > 0 else f'Złowiłeś **{name}**... nic nie warte 😂'
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#7289da',
+            'title': '🎣 Wędkowanie', 'description': msg})
+
+    if cmd == 'mine':
+        ok_cd, left = _cooldown('mine_last', 60)
+        if not ok_cd:
+            return jsonify({'ok': False, 'message': f'Kilofy odpoczywają! {_fmt(left)}.'})
+        ores = [('⬛ Węgiel',15,40),('🔩 Żelazo',30,70),('💎 Diament',100,250),('🥇 Złoto',60,130),('🪨 Skała',0,0)]
+        name, lo, hi = _rnd.choice(ores)
+        earn = int(_rnd.randint(lo, hi) * db.get_event_multiplier(guild_id, 'mopsy')) if hi > 0 else 0
+        if earn > 0:
+            db.add_cash(uid, guild_id, earn)
+        db.set_cooldown(uid, guild_id, 'mine_last')
+        msg = f'Wydobyłeś **{name}** za **{earn} 🐾**!' if earn > 0 else f'Trafiłeś na **{name}**... bezużyteczny 😅'
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#99aab5',
+            'title': '⛏️ Kopanie', 'description': msg})
+
+    if cmd == 'hunt':
+        ok_cd, left = _cooldown('hunt_last', 60)
+        if not ok_cd:
+            return jsonify({'ok': False, 'message': f'Broń musi odpocząć! {_fmt(left)}.'})
+        prey = [('🦊 Lisa',25,60),('🐗 Dzika',40,90),('🐻 Niedźwiedzia',80,180),('🐇 Zająca',10,30),('❌ Nic',0,0)]
+        name, lo, hi = _rnd.choice(prey)
+        earn = int(_rnd.randint(lo, hi) * db.get_event_multiplier(guild_id, 'mopsy')) if hi > 0 else 0
+        if earn > 0:
+            db.add_cash(uid, guild_id, earn)
+        db.set_cooldown(uid, guild_id, 'hunt_last')
+        msg = f'Upolowałeś **{name}** za **{earn} 🐾**!' if earn > 0 else 'Nic nie upolowałeś tym razem 😞'
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#f04747',
+            'title': '🏹 Polowanie', 'description': msg})
+
+    if cmd == 'shop':
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#faa61a',
+            'title': '🛒 Sklep',
+            'description': 'Sklep konfiguruje admin. Użyj `.shop` na Discordzie.'})
+
+    # ── Gry / Kasyno ─────────────────────────────────────────────────────────
+    if cmd == 'slots':
+        ok_cd, left = _cooldown('slots_last', 2)
+        if not ok_cd:
+            return jsonify({'ok': False, 'message': f'Chwila przerwy! {_fmt(left)}.'})
+        syms = ['🍒','🍋','🍊','⭐','💎','🔔','🍀','🎰']
+        weights = [25,20,18,15,10,7,4,1]
+        reels = [_rnd.choices(syms, weights=weights)[0] for _ in range(3)]
+        if reels[0] == reels[1] == reels[2]:
+            mult_map = {'💎':50,'🎰':30,'🍀':20,'🔔':15,'⭐':10,'🍊':7,'🍋':5,'🍒':3}
+            earn = 50 * mult_map.get(reels[0], 3)
+            result = 'jackpot'
+        elif len(set(reels)) < 3:
+            earn = 30
+            result = 'win'
+        else:
+            earn = 0
+            result = 'lose'
+        if earn > 0:
+            db.add_cash(uid, guild_id, earn)
+        db.set_cooldown(uid, guild_id, 'slots_last')
+        return jsonify({'ok': True, 'type': 'slots', 'reels': reels, 'result': result, 'earn': earn})
+
+    if cmd in ('blackjack', 'bj'):
+        bet = int(arg) if arg.isdigit() else 50
+        if bet < 10: bet = 10
+        cash = int(wallet.get('cash') or 0)
+        if bet > cash:
+            return jsonify({'ok': False, 'message': f'Nie masz {bet} 🐾! Masz {cash} 🐾.'})
+        vals = {'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':10,'Q':10,'K':10,'A':11}
+        suits = ['♠','♥','♦','♣']
+        deck = [f'{r}{s}' for s in suits for r in vals.keys()]
+        _rnd.shuffle(deck)
+        def _hv(h):
+            s = sum(vals[c[:-1]] for c in h)
+            a = sum(1 for c in h if c[:-1] == 'A')
+            while s > 21 and a: s -= 10; a -= 1
+            return s
+        ph = [deck.pop(), deck.pop()]
+        dh = [deck.pop(), deck.pop()]
+        db.add_cash(uid, guild_id, -bet)
+        session['bj'] = {'ph': ph, 'dh': dh, 'deck': deck, 'bet': bet, 'guild': guild_id, 'uid': uid}
+        pv = _hv(ph)
+        if pv == 21:
+            earn = int(bet * 2.5)
+            db.add_cash(uid, guild_id, earn)
+            session.pop('bj', None)
+            return jsonify({'ok': True, 'type': 'blackjack', 'player_hand': ph, 'dealer_hand': dh,
+                'player_val': pv, 'dealer_val': _hv(dh), 'status': 'blackjack', 'earn': earn, 'bet': bet,
+                'message': f'BLACKJACK! Wygrywasz {earn} 🐾!'})
+        return jsonify({'ok': True, 'type': 'blackjack',
+            'player_hand': ph, 'dealer_hand': [dh[0], '??'],
+            'player_val': pv, 'dealer_val': None, 'status': 'playing', 'bet': bet})
+
+    if cmd == 'bj_hit':
+        bj = session.get('bj')
+        if not bj:
+            return jsonify({'ok': False, 'message': 'Brak aktywnej gry. Zacznij nową: .bj [stawka]'})
+        vals = {'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':10,'Q':10,'K':10,'A':11}
+        def _hv(h):
+            s = sum(vals[c[:-1]] for c in h)
+            a = sum(1 for c in h if c[:-1] == 'A')
+            while s > 21 and a: s -= 10; a -= 1
+            return s
+        bj['ph'].append(bj['deck'].pop())
+        session['bj'] = bj
+        pv = _hv(bj['ph'])
+        if pv > 21:
+            session.pop('bj', None)
+            return jsonify({'ok': True, 'type': 'blackjack',
+                'player_hand': bj['ph'], 'dealer_hand': bj['dh'],
+                'player_val': pv, 'dealer_val': _hv(bj['dh']),
+                'status': 'bust', 'earn': 0, 'bet': bj['bet'],
+                'message': f'Bust! Przekroczyłeś 21. Tracisz {bj["bet"]} 🐾.'})
+        return jsonify({'ok': True, 'type': 'blackjack',
+            'player_hand': bj['ph'], 'dealer_hand': [bj['dh'][0], '??'],
+            'player_val': pv, 'dealer_val': None, 'status': 'playing', 'bet': bj['bet']})
+
+    if cmd == 'bj_stand':
+        bj = session.get('bj')
+        if not bj:
+            return jsonify({'ok': False, 'message': 'Brak aktywnej gry.'})
+        vals = {'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':10,'Q':10,'K':10,'A':11}
+        def _hv(h):
+            s = sum(vals[c[:-1]] for c in h)
+            a = sum(1 for c in h if c[:-1] == 'A')
+            while s > 21 and a: s -= 10; a -= 1
+            return s
+        while _hv(bj['dh']) < 17:
+            bj['dh'].append(bj['deck'].pop())
+        pv = _hv(bj['ph']); dv = _hv(bj['dh'])
+        session.pop('bj', None)
+        if dv > 21 or pv > dv:
+            earn = bj['bet'] * 2; db.add_cash(uid, guild_id, earn)
+            status = 'win'; msg = f'Wygrywasz! +{earn} 🐾'
+        elif pv == dv:
+            db.add_cash(uid, guild_id, bj['bet'])
+            status = 'push'; earn = bj['bet']; msg = f'Remis! Zwrot {bj["bet"]} 🐾'
+        else:
+            status = 'lose'; earn = 0; msg = f'Dealer wygrywa. Tracisz {bj["bet"]} 🐾'
+        return jsonify({'ok': True, 'type': 'blackjack',
+            'player_hand': bj['ph'], 'dealer_hand': bj['dh'],
+            'player_val': pv, 'dealer_val': dv,
+            'status': status, 'earn': earn, 'bet': bj['bet'], 'message': msg})
+
+    if cmd in ('highlow', 'hl'):
+        vals = {'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':11,'Q':12,'K':13,'A':14}
+        suits = ['♠','♥','♦','♣']
+        card = _rnd.choice([f'{r}{s}' for s in suits for r in vals.keys()])
+        session['hl'] = {'card': card, 'vals': vals}
+        return jsonify({'ok': True, 'type': 'highlow', 'card': card})
+
+    if cmd in ('hl_higher', 'hl_lower'):
+        hl = session.get('hl')
+        if not hl:
+            return jsonify({'ok': False, 'message': 'Brak aktywnej gry. Zacznij: .hl'})
+        vals = {'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':11,'Q':12,'K':13,'A':14}
+        suits = ['♠','♥','♦','♣']
+        old_card = hl['card']
+        new_card = _rnd.choice([f'{r}{s}' for s in suits for r in vals.keys()])
+        session.pop('hl', None)
+        ov = vals[old_card[:-1]]; nv = vals[new_card[:-1]]
+        if ov == nv:
+            return jsonify({'ok': True, 'type': 'highlow_result', 'old_card': old_card, 'new_card': new_card,
+                'status': 'tie', 'earn': 0, 'message': 'Taka sama wartość! Remis 😅'})
+        correct = (cmd == 'hl_higher' and nv > ov) or (cmd == 'hl_lower' and nv < ov)
+        earn = _rnd.randint(20, 60) if correct else 0
+        if correct:
+            db.add_cash(uid, guild_id, earn)
+        return jsonify({'ok': True, 'type': 'highlow_result', 'old_card': old_card, 'new_card': new_card,
+            'status': 'win' if correct else 'lose', 'earn': earn,
+            'message': f'{"Dobrze!" if correct else "Źle!"} Karta to {new_card}. '
+                       f'{"Wygrywasz " + str(earn) + " 🐾!" if correct else "Nie wygrywasz nic."}'})
+
+    if cmd == 'scratch':
+        cost = 30
+        if int(wallet.get('cash') or 0) < cost:
+            return jsonify({'ok': False, 'message': f'Potrzebujesz {cost} 🐾. Masz {int(wallet.get("cash",0))} 🐾.'})
+        db.add_cash(uid, guild_id, -cost)
+        syms = ['💎','🌟','🍒','❌','🔔','🍀']
+        weights = [2,5,20,50,15,8]
+        grid = [_rnd.choices(syms, weights=weights)[0] for _ in range(9)]
+        prize_map = {'💎':1000,'🌟':300,'🍒':100,'🔔':50,'🍀':200}
+        counts = {}
+        for s in grid:
+            if s != '❌':
+                counts[s] = counts.get(s, 0) + 1
+        earn = sum(prize_map.get(s, 0) * (n - 2) for s, n in counts.items() if n >= 3)
+        if earn > 0:
+            db.add_cash(uid, guild_id, earn)
+        return jsonify({'ok': True, 'type': 'scratch', 'grid': grid, 'earn': earn, 'cost': cost})
+
+    if cmd == 'rps':
+        choices_map = {'kamien':'🪨','papier':'📄','nozyce':'✂️','k':'🪨','p':'📄','n':'✂️'}
+        if not arg or arg.lower() not in choices_map:
+            return jsonify({'ok': True, 'type': 'rps_choose'})
+        uc = choices_map[arg.lower()]
+        bc = _rnd.choice(['🪨','📄','✂️'])
+        wins_against = {'🪨':'✂️','📄':'🪨','✂️':'📄'}
+        if uc == bc:       status = 'tie'; msg = 'Remis!'
+        elif wins_against[uc] == bc: status = 'win'; msg = 'Wygrywasz! 🎉'
+        else:              status = 'lose'; msg = 'Przegrywasz! 😢'
+        return jsonify({'ok': True, 'type': 'rps_result', 'user': uc, 'bot': bc, 'status': status, 'message': msg})
+
+    # ── Społeczne / Rozrywka ──────────────────────────────────────────────────
+    if cmd in ('hug','pat','slap','gg'):
+        actions = {'hug':'przytula','pat':'głaszcze','slap':'uderza','gg':'gratuluje'}
+        emojis  = {'hug':'🤗','pat':'✋','slap':'👋','gg':'🎉'}
+        target = arg or 'kogoś'
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#faa61a',
+            'title': f'{emojis[cmd]} Akcja',
+            'description': f'**{session.get("discord_username","Ty")}** {actions[cmd]} **{target}**!'})
+
+    if cmd == 'ship':
+        names = arg.split()
+        if len(names) < 2:
+            return jsonify({'ok': False, 'message': 'Użycie: .ship imię1 imię2'})
+        score = abs(hash(names[0].lower() + names[1].lower())) % 101
+        bar = '💗' * (score // 10) + '🖤' * (10 - score // 10)
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#f04747',
+            'title': '❤️ Ship',
+            'description': f'**{names[0]}** + **{names[1]}**\n{bar}\n**{score}%** kompatybilności!'})
+
+    if cmd == 'rate':
+        if not arg:
+            return jsonify({'ok': False, 'message': 'Podaj coś do ocenienia.'})
+        score = abs(hash(arg.lower())) % 11
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#7289da',
+            'title': '⭐ Ocena', 'description': f'**{arg}** → **{score}/10** ⭐'})
+
+    if cmd == 'fact':
+        facts = ['Mrówki nigdy nie śpią.','Miód nigdy się nie psuje.','Ośmiornice mają 3 serca.',
+                 'Flamingom kolor dają krewetki.','Koty nie czują słodkiego smaku.',
+                 'Delfiny śpią z jednym otwartym okiem.']
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#43b581',
+            'title': '💡 Ciekawostka', 'description': _rnd.choice(facts)})
+
+    if cmd == 'joke':
+        jokes = ['Dlaczego programista wychodzi przez okno? Bo ma za dużo bugów w drzwiach.',
+                 'Co mówi null do undefined? Ciebie też nie ma!',
+                 'Ile programistów potrzeba żeby wkręcić żarówkę? Zero — to problem sprzętowy.']
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#faa61a',
+            'title': '😂 Żart', 'description': _rnd.choice(jokes)})
+
+    if cmd == 'quote':
+        quotes = ['"Kod zawsze robi to co piszesz, nie to co masz na myśli."',
+                  '"Najlepsza dokumentacja to czytelny kod."',
+                  '"Najpierw rozwiąż problem, potem napisz kod."']
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#99aab5',
+            'title': '💬 Cytat', 'description': _rnd.choice(quotes)})
+
+    if cmd == 'reverse':
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#7289da',
+            'title': '🔄 Odwrócony', 'description': f'`{arg[::-1]}`'}) if arg else \
+               jsonify({'ok': False, 'message': 'Podaj tekst.'})
+
+    if cmd == 'upper':
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#7289da',
+            'title': '🔠 CAPS', 'description': f'`{arg.upper()}`'}) if arg else \
+               jsonify({'ok': False, 'message': 'Podaj tekst.'})
+
+    if cmd == 'lower':
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#7289da',
+            'title': '🔡 małe', 'description': f'`{arg.lower()}`'}) if arg else \
+               jsonify({'ok': False, 'message': 'Podaj tekst.'})
+
+    if cmd == 'ping':
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#43b581',
+            'title': '🏓 Pong!', 'description': 'Dashboard odpowiada ⚡'})
+
+    return jsonify({'ok': False, 'message': f'Komenda `.{cmd}` niedostępna w przeglądarce.'})
+
+
+# ─── Clock in/out from browser ───────────────────────────────────────────────
+
+@app.route('/guild/<int:guild_id>/me/clock', methods=['POST'])
+@any_login_required
+def user_clock(guild_id):
+    uid = _session_discord_id()
+    if not uid:
+        return jsonify({'ok': False, 'message': 'Zaloguj się przez Discord.'})
+    db.ensure_guild(guild_id)
+    db.ensure_user(uid, guild_id)
+    user = db.get_user(uid, guild_id) or {}
+    if user.get('is_banned'):
+        return jsonify({'ok': False, 'message': 'Jesteś zbanowany.'})
+    if user.get('is_clocked_in'):
+        result = db.clock_out(uid, guild_id) or {}
+        hrs = round(result.get('hours', 0), 2)
+        pts = round(result.get('points_earned', 0), 1)
+        return jsonify({'ok': True, 'action': 'out',
+            'message': f'Clock out! Sesja: {hrs}h, +{pts} pkt',
+            'points_earned': pts, 'duration': hrs})
+    else:
+        db.clock_in(uid, guild_id)
+        return jsonify({'ok': True, 'action': 'in', 'message': 'Clock in! Sesja rozpoczęta ✅'})
+
+
 @app.route('/guild/<int:guild_id>/leaderboard')
 @any_login_required
 def leaderboard_page(guild_id):

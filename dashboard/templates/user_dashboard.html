@@ -2,25 +2,36 @@
 {% block title %}Mój Panel{% endblock %}
 {% block extra_head %}
 <style>
-  /* Main tabs */
+  /* Main tabs — horizontal scroll on mobile */
+  .panel-tabs {
+    border-bottom: 1px solid #40444b; margin-bottom: 1.5rem;
+    display: flex; overflow-x: auto; flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  .panel-tabs::-webkit-scrollbar { display: none; }
+  .panel-tabs .nav-item { flex-shrink: 0; }
   .panel-tabs .nav-link {
     color: #99aab5; border: none; border-bottom: 2px solid transparent;
     border-radius: 0; padding: .6rem 1.1rem; font-weight: 600; font-size: .9rem;
-    background: none;
+    background: none; white-space: nowrap;
   }
   .panel-tabs .nav-link.active, .panel-tabs .nav-link:hover {
     color: var(--discord-blue); border-bottom-color: var(--discord-blue);
     background: none;
   }
-  .panel-tabs { border-bottom: 1px solid #40444b; margin-bottom: 1.5rem; }
 
-  /* Sub-tabs (inside Ekonomia etc.) */
+  /* Sub-tabs — scrollable on mobile too */
+  .sub-tabs {
+    gap: .3rem; display: flex; flex-wrap: nowrap;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; padding-bottom: .2rem;
+  }
+  .sub-tabs::-webkit-scrollbar { display: none; }
   .sub-tabs .nav-link {
     color: #99aab5; font-size: .82rem; padding: .35rem .9rem;
-    border-radius: 6px; background: none; border: none;
+    border-radius: 6px; background: none; border: none; white-space: nowrap; flex-shrink: 0;
   }
   .sub-tabs .nav-link.active { background: rgba(114,137,218,.18); color: var(--discord-blue); }
-  .sub-tabs { gap: .3rem; }
 
   /* Command cards */
   .cmd-card {
@@ -53,10 +64,44 @@
   }
   .cmd-card { position: relative; }
 
-  /* Result toast */
-  #cmd-toast {
-    position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999;
-    min-width: 260px; max-width: 380px; display: none;
+  /* Result box */
+  #result-box { margin-top: 1.5rem; }
+  #result-inner { min-height: 60px; }
+  .result-embed {
+    border-radius: 0 8px 8px 0;
+    padding: .8rem 1rem;
+    background: rgba(0,0,0,.2);
+  }
+  /* Slot reels */
+  .slot-reel {
+    font-size: 2.2rem; background: rgba(0,0,0,.3);
+    border: 2px solid #40444b; border-radius: 10px;
+    width: 65px; height: 65px;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color .3s, background .3s;
+  }
+  @media (max-width: 400px) {
+    .slot-reel { width: 52px; height: 52px; font-size: 1.7rem; }
+  }
+  /* Scratch cells */
+  .scratch-cell {
+    width: 65px; height: 65px; background: #40444b; border-radius: 8px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    font-size: 1.6rem; transition: all .3s; user-select: none;
+  }
+  @media (max-width: 400px) {
+    .scratch-cell { width: 52px; height: 52px; font-size: 1.3rem; }
+  }
+  /* BJ card */
+  .bj-card {
+    width: 52px; height: 72px; border-radius: 6px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: .82rem;
+  }
+  /* cmd-cards on mobile: 2 per row minimum */
+  @media (max-width: 575px) {
+    .cmd-card { padding: .65rem .75rem; }
+    .cmd-card .cmd-icon { font-size: 1.25rem; }
   }
 
   /* Stat mini */
@@ -171,6 +216,24 @@
         </div>
         <small class="text-muted">{{ user.streak_days or 0 }} dni z rzędu</small>
       </div>
+    </div>
+  </div>
+
+  <!-- Clock in/out button -->
+  <div class="card mb-3">
+    <div class="card-body py-3">
+      {% if uid %}
+      <button id="clock-btn"
+        class="btn {% if user and user.is_clocked_in %}btn-danger{% else %}btn-discord{% endif %} w-100 mb-1"
+        style="font-size:1rem">
+        {% if user and user.is_clocked_in %}🟢 Clock Out{% else %}⚫ Clock In{% endif %}
+      </button>
+      <div id="clock-status" class="text-center {% if user and user.is_clocked_in %}text-success{% else %}text-muted{% endif %} small">
+        {% if user and user.is_clocked_in %}Sesja aktywna od {{ (user.clock_in_time or '')[:16].replace('T',' ') }}{% else %}Brak aktywnej sesji{% endif %}
+      </div>
+      {% else %}
+      <button class="btn btn-secondary w-100" disabled>Zaloguj się przez Discord</button>
+      {% endif %}
     </div>
   </div>
 
@@ -407,11 +470,16 @@
   </div>
 </div>
 
-<!-- Toast result -->
-<div id="cmd-toast" role="alert">
-  <div class="alert mb-0 d-flex align-items-center gap-2" id="cmd-toast-inner" style="box-shadow:0 4px 20px rgba(0,0,0,.4)">
-    <i class="bi" id="cmd-toast-icon" style="font-size:1.1rem"></i>
-    <span id="cmd-toast-msg"></span>
+<!-- Result box -->
+<div id="result-box" class="d-none">
+  <div class="card">
+    <div class="card-header border-0 pb-0 d-flex justify-content-between align-items-center">
+      <span class="section-title"><i class="bi bi-terminal me-1"></i>Wynik komendy</span>
+      <button class="btn btn-sm btn-link text-muted p-0" onclick="document.getElementById('result-box').classList.add('d-none')">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+    <div class="card-body pt-2" id="result-inner"></div>
   </div>
 </div>
 
@@ -419,8 +487,12 @@
 {% block extra_js %}
 {{ super() }}
 <script>
-// ── Main tabs ──
-document.querySelectorAll('#mainTabs .nav-link').forEach(function(btn) {
+const GUILD_ID = '{{ guild_id }}';
+const RUN_URL  = '/guild/' + GUILD_ID + '/me/run';
+const CLK_URL  = '/guild/' + GUILD_ID + '/me/clock';
+
+// ── Tabs ──
+document.querySelectorAll('#mainTabs .nav-link').forEach(btn => {
   btn.addEventListener('click', function() {
     document.querySelectorAll('#mainTabs .nav-link').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('d-none'));
@@ -428,9 +500,7 @@ document.querySelectorAll('#mainTabs .nav-link').forEach(function(btn) {
     document.getElementById('tab-' + this.dataset.tab).classList.remove('d-none');
   });
 });
-
-// ── Ekonomia sub-tabs ──
-document.querySelectorAll('#econSubTabs .nav-link').forEach(function(btn) {
+document.querySelectorAll('#econSubTabs .nav-link').forEach(btn => {
   btn.addEventListener('click', function() {
     document.querySelectorAll('#econSubTabs .nav-link').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('[data-group="econ-subtab"]').forEach(p => p.classList.add('d-none'));
@@ -439,47 +509,270 @@ document.querySelectorAll('#econSubTabs .nav-link').forEach(function(btn) {
   });
 });
 
-// ── Run command ──
-function showToast(ok, msg) {
-  const t = document.getElementById('cmd-toast');
-  const inner = document.getElementById('cmd-toast-inner');
-  const icon  = document.getElementById('cmd-toast-icon');
-  const msgEl = document.getElementById('cmd-toast-msg');
-  inner.className = 'alert mb-0 d-flex align-items-center gap-2 ' + (ok ? 'alert-success' : 'alert-danger');
-  icon.className  = 'bi ' + (ok ? 'bi-check-circle-fill' : 'bi-x-circle-fill');
-  msgEl.textContent = msg;
-  t.style.display = 'block';
-  clearTimeout(t._to);
-  t._to = setTimeout(() => { t.style.display = 'none'; }, 4000);
+// ── Helpers ──
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function showResult(data) {
+  const box   = document.getElementById('result-box');
+  const inner = document.getElementById('result-inner');
+  box.classList.remove('d-none');
+  if (!data.ok) {
+    inner.innerHTML = `<div class="alert alert-danger mb-0"><i class="bi bi-x-circle me-2"></i>${esc(data.message||'Błąd')}</div>`;
+    box.scrollIntoView({behavior:'smooth',block:'nearest'});
+    return;
+  }
+  const t = data.type;
+  if (t === 'slots')          { renderSlots(data);         return; }
+  if (t === 'scratch')        { renderScratch(data);       return; }
+  if (t === 'blackjack')      { renderBlackjack(data);     return; }
+  if (t === 'highlow')        { renderHighlow(data);       return; }
+  if (t === 'highlow_result') { renderHLResult(data);      return; }
+  if (t === 'rps_choose')     { renderRpsChoose();         return; }
+  if (t === 'rps_result')     { renderRpsResult(data);     return; }
+  if (t === 'rank')           { renderRank(data);          return; }
+  // embed
+  let h = `<div class="result-embed" style="border-left:4px solid ${data.color||'#7289da'}">`;
+  if (data.title)       h += `<div class="fw-bold text-white mb-1">${esc(data.title)}</div>`;
+  if (data.description) h += `<div class="text-muted" style="white-space:pre-line">${esc(data.description)}</div>`;
+  if (data.fields) {
+    h += '<div class="d-flex flex-wrap gap-3 mt-2">';
+    for (const f of data.fields)
+      h += `<div><div class="text-muted" style="font-size:.7rem">${esc(f.name)}</div><div class="text-white fw-bold">${esc(f.value)}</div></div>`;
+    h += '</div>';
+  }
+  h += '</div>';
+  inner.innerHTML = h;
+  box.scrollIntoView({behavior:'smooth',block:'nearest'});
 }
 
-document.addEventListener('click', async function(e) {
-  const btn = e.target.closest('.use-btn');
-  if (!btn) return;
-  const card = btn.closest('.cmd-card');
-  const cmd  = btn.dataset.cmd;
-  const argInput = card.querySelector('.arg-input');
-  const arg = argInput ? argInput.value.trim() : '';
+// ── Slot animation ──
+function renderSlots(data) {
+  const inner = document.getElementById('result-inner');
+  const clr = {jackpot:'#faa61a',win:'#43b581',lose:'#f04747'}[data.result]||'#99aab5';
+  const lbl = {jackpot:'🎰 JACKPOT!!!',win:'✨ Wygrana!',lose:'😢 Brak wygranej'}[data.result];
+  inner.innerHTML = `<div class="text-center py-2">
+    <div class="fw-bold mb-2" style="color:${clr};font-size:1.1rem">${lbl}</div>
+    <div class="d-flex justify-content-center gap-2 my-2">
+      ${data.reels.map((_,i)=>`<div class="slot-reel" id="sr${i}">🎰</div>`).join('')}
+    </div>
+    <div class="${data.earn>0?'text-success':'text-muted'} fw-bold">${data.earn>0?'+'+data.earn+' 🐾':'0 🐾'}</div>
+  </div>`;
+  const all=['🍒','🍋','🍊','⭐','💎','🔔','🍀','🎰'];
+  data.reels.forEach((sym,i)=>{
+    let n=0;
+    const iv=setInterval(()=>{
+      const el=document.getElementById('sr'+i);
+      if(el) el.textContent=all[n%all.length];
+      n++;
+      if(n>10+i*6){ clearInterval(iv);
+        if(el){ el.textContent=sym; el.style.borderColor=clr; el.style.background=clr+'22'; }
+      }
+    },70+i*25);
+  });
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
 
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-
-  try {
-    const body = { action: cmd, user_id: '{{ uid or "" }}' };
-    if (arg) body.args = arg;
-    const r = await fetch('/guild/{{ guild_id }}/command-panel', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    const d = await r.json();
-    showToast(d.ok, d.message || (d.ok ? 'Komenda wysłana do Discorda!' : 'Brak odpowiedzi'));
-  } catch(err) {
-    showToast(false, 'Błąd: ' + err.message);
+// ── Scratch card ──
+function renderScratch(data) {
+  const inner = document.getElementById('result-inner');
+  const cells = data.grid.map((s,i)=>
+    `<div class="scratch-cell" data-sym="${s}" data-idx="${i}">🔲</div>`).join('');
+  inner.innerHTML = `<div class="text-center">
+    <div class="text-white fw-bold mb-2">🎟️ Zdrapka <small class="text-muted">(koszt: ${data.cost} 🐾)</small></div>
+    <div class="d-flex flex-wrap justify-content-center gap-2 mb-3" id="sg">${cells}</div>
+    <div id="sr2" class="d-none"></div>
+    <button class="btn btn-sm btn-outline-secondary" id="sa">Odkryj wszystko</button>
+  </div>`;
+  let done=0;
+  function rev(el){
+    if(el.dataset.r) return;
+    el.dataset.r='1'; el.textContent=el.dataset.sym;
+    el.style.background=el.dataset.sym==='❌'?'rgba(240,71,71,.2)':'rgba(67,181,129,.2)';
+    if(++done===data.grid.length){
+      const d2=document.getElementById('sr2'); d2.classList.remove('d-none');
+      d2.innerHTML=data.earn>0
+        ?`<div class="alert alert-success">🎉 Wygrywasz <strong>${data.earn} 🐾</strong>!</div>`
+        :`<div class="alert alert-secondary">Tym razem nic 😅 (strata: ${data.cost} 🐾)</div>`;
+    }
   }
+  document.querySelectorAll('.scratch-cell').forEach(el=>el.addEventListener('click',()=>rev(el)));
+  document.getElementById('sa').addEventListener('click',()=>document.querySelectorAll('.scratch-cell').forEach(rev));
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
 
-  btn.disabled = false;
-  btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Użyj';
+// ── Blackjack ──
+function cardHtml(c){
+  if(c==='??') return `<div class="bj-card" style="background:#40444b;border:1px solid #99aab5">🂠</div>`;
+  const red=c.includes('♥')||c.includes('♦');
+  return `<div class="bj-card" style="background:#fff;border:1px solid #ccc;color:${red?'#c0392b':'#2c3e50'}">${esc(c)}</div>`;
+}
+function renderBlackjack(data){
+  const inner=document.getElementById('result-inner');
+  const stClr={win:'#43b581',lose:'#f04747',push:'#faa61a',bust:'#f04747',blackjack:'#faa61a',playing:'#7289da'};
+  const stLbl={win:'Wygrywasz! 🎉',lose:'Dealer wygrywa 😢',push:'Remis 🤝',bust:'Bust! 💥',blackjack:'BLACKJACK! 🃏',playing:'Twój ruch...'};
+  const done=['win','lose','push','bust','blackjack'].includes(data.status);
+  inner.innerHTML=`<div style="background:rgba(0,0,0,.2);border-radius:12px;padding:1rem">
+    <div class="d-flex justify-content-between mb-3">
+      <div><div class="text-muted" style="font-size:.72rem">DEALER ${data.dealer_val?'('+data.dealer_val+')':''}</div>
+        <div class="d-flex gap-1 mt-1">${(data.dealer_hand||[]).map(c=>cardHtml(c)).join('')}</div></div>
+      <div class="text-end"><div class="text-muted" style="font-size:.72rem">TY (${data.player_val||'?'})</div>
+        <div class="d-flex gap-1 mt-1 justify-content-end">${(data.player_hand||[]).map(c=>cardHtml(c)).join('')}</div></div>
+    </div>
+    <div class="text-center mb-2">
+      <span class="fw-bold" style="color:${stClr[data.status]||'#fff'}">${stLbl[data.status]||''}</span>
+      ${data.message?`<div class="text-muted small">${esc(data.message)}</div>`:''}
+      ${data.earn>0&&done?`<div class="text-success fw-bold">+${data.earn} 🐾</div>`:''}
+    </div>
+    ${!done?`<div class="d-flex gap-2 justify-content-center">
+      <button class="btn btn-discord btn-sm" id="bj-hit">🃏 Dobierz</button>
+      <button class="btn btn-outline-secondary btn-sm" id="bj-stand">✋ Stój</button>
+    </div>`:`<div class="text-center"><button class="btn btn-sm btn-outline-secondary" id="bj-new">Nowa gra</button></div>`}
+    <div class="text-center mt-1 text-muted small">Stawka: ${data.bet||0} 🐾</div>
+  </div>`;
+  document.getElementById('bj-hit')?.addEventListener('click',async()=>{
+    const r=await fetch(RUN_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'bj_hit'})});
+    showResult(await r.json());
+  });
+  document.getElementById('bj-stand')?.addEventListener('click',async()=>{
+    const r=await fetch(RUN_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'bj_stand'})});
+    showResult(await r.json());
+  });
+  document.getElementById('bj-new')?.addEventListener('click',()=>document.getElementById('result-box').classList.add('d-none'));
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+// ── Highlow ──
+function renderHighlow(data){
+  const inner=document.getElementById('result-inner');
+  inner.innerHTML=`<div class="text-center py-2">
+    <div class="text-white fw-bold mb-2">🃏 Wyżej czy Niżej?</div>
+    <div style="font-size:2rem;margin:.8rem">${esc(data.card)}</div>
+    <div class="d-flex gap-2 justify-content-center">
+      <button class="btn btn-discord btn-sm" id="hl-hi">⬆️ Wyżej</button>
+      <button class="btn btn-outline-secondary btn-sm" id="hl-lo">⬇️ Niżej</button>
+    </div>
+  </div>`;
+  async function pick(a){
+    const r=await fetch(RUN_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:a})});
+    showResult(await r.json());
+  }
+  document.getElementById('hl-hi').addEventListener('click',()=>pick('hl_higher'));
+  document.getElementById('hl-lo').addEventListener('click',()=>pick('hl_lower'));
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+function renderHLResult(data){
+  const inner=document.getElementById('result-inner');
+  const clr=data.status==='win'?'#43b581':data.status==='tie'?'#faa61a':'#f04747';
+  inner.innerHTML=`<div class="text-center py-2">
+    <div class="d-flex justify-content-center gap-4 mb-2">
+      <div><div class="text-muted small">Poprzednia</div><div style="font-size:1.8rem">${esc(data.old_card)}</div></div>
+      <div style="align-self:center;color:#99aab5">→</div>
+      <div><div class="text-muted small">Nowa</div><div style="font-size:1.8rem">${esc(data.new_card)}</div></div>
+    </div>
+    <div class="fw-bold" style="color:${clr}">${esc(data.message)}</div>
+    ${data.earn>0?`<div class="text-success fw-bold mt-1">+${data.earn} 🐾</div>`:''}
+  </div>`;
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+// ── RPS ──
+function renderRpsChoose(){
+  const inner=document.getElementById('result-inner');
+  inner.innerHTML=`<div class="text-center py-2">
+    <div class="text-white fw-bold mb-3">Wybierz:</div>
+    <div class="d-flex gap-3 justify-content-center">
+      <button class="btn rps-btn" data-c="kamien" style="font-size:2rem;background:rgba(255,255,255,.06);border:1px solid #40444b;border-radius:12px;padding:.4rem 1rem">🪨</button>
+      <button class="btn rps-btn" data-c="papier"  style="font-size:2rem;background:rgba(255,255,255,.06);border:1px solid #40444b;border-radius:12px;padding:.4rem 1rem">📄</button>
+      <button class="btn rps-btn" data-c="nozyce"  style="font-size:2rem;background:rgba(255,255,255,.06);border:1px solid #40444b;border-radius:12px;padding:.4rem 1rem">✂️</button>
+    </div>
+  </div>`;
+  document.querySelectorAll('.rps-btn').forEach(btn=>{
+    btn.addEventListener('click',async function(){
+      const r=await fetch(RUN_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'rps',args:this.dataset.c})});
+      showResult(await r.json());
+    });
+  });
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+function renderRpsResult(data){
+  const inner=document.getElementById('result-inner');
+  const clr=data.status==='win'?'#43b581':data.status==='tie'?'#faa61a':'#f04747';
+  inner.innerHTML=`<div class="text-center py-2">
+    <div class="d-flex justify-content-center gap-4 mb-2" style="font-size:2.5rem">
+      <div><div class="text-muted" style="font-size:.72rem">TY</div>${data.user}</div>
+      <div style="align-self:center;font-size:1.2rem;color:#99aab5">vs</div>
+      <div><div class="text-muted" style="font-size:.72rem">BOT</div>${data.bot}</div>
+    </div>
+    <div class="fw-bold" style="color:${clr};font-size:1.1rem">${esc(data.message)}</div>
+  </div>`;
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+// ── Rank display ──
+function renderRank(data){
+  const inner=document.getElementById('result-inner');
+  inner.innerHTML=`<div style="background:rgba(0,0,0,.2);border-radius:10px;padding:1rem">
+    <div class="d-flex align-items-center gap-2 mb-2">
+      <span style="font-size:1.4rem">${esc(data.rank_icon)}</span>
+      <span class="text-white fw-bold">${esc(data.rank)}</span>
+    </div>
+    <div class="progress mb-1" style="height:8px;background:#40444b">
+      <div class="progress-bar" style="width:${data.progress}%;background:var(--discord-blue)"></div>
+    </div>
+    <div class="d-flex justify-content-between">
+      <small class="text-muted">${data.pts} pkt</small>
+      <small class="text-muted">${data.next?'→ '+esc(data.next)+' ('+data.next_pts+' pkt)':'Maks ranga!'}</small>
+    </div>
+  </div>`;
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+// ── Run command ──
+document.addEventListener('click', async function(e){
+  const btn=e.target.closest('.use-btn');
+  if(!btn) return;
+  const card=btn.closest('.cmd-card');
+  const cmd=btn.dataset.cmd;
+  const argIn=card.querySelector('.arg-input');
+  const arg=argIn?argIn.value.trim():'';
+
+  const box=document.getElementById('result-box');
+  box.classList.remove('d-none');
+  document.getElementById('result-inner').innerHTML='<div class="text-center py-3"><div class="spinner-border text-secondary"></div></div>';
+  box.scrollIntoView({behavior:'smooth',block:'nearest'});
+
+  const orig=btn.innerHTML; btn.disabled=true;
+  btn.innerHTML='<span class="spinner-border spinner-border-sm"></span>';
+  try{
+    const r=await fetch(RUN_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:cmd,args:arg})});
+    const ct=r.headers.get('content-type')||'';
+    if(!ct.includes('json')){ showResult({ok:false,message:'Błąd serwera (HTML). Odśwież stronę.'}); }
+    else showResult(await r.json());
+  }catch(err){ showResult({ok:false,message:'Błąd sieci: '+err.message}); }
+  btn.disabled=false; btn.innerHTML=orig;
+});
+
+// ── Clock in/out ──
+document.getElementById('clock-btn')?.addEventListener('click',async function(){
+  this.disabled=true;
+  const orig=this.innerHTML; this.innerHTML='<span class="spinner-border spinner-border-sm"></span>';
+  try{
+    const r=await fetch(CLK_URL,{method:'POST',headers:{'Content-Type':'application/json'}});
+    const d=await r.json();
+    if(d.ok){
+      const isIn=d.action==='in';
+      this.textContent=isIn?'🟢 Clock Out':'⚫ Clock In';
+      this.className='btn '+(isIn?'btn-danger':'btn-discord')+' w-100 mb-1';
+      const st=document.getElementById('clock-status');
+      st.textContent=d.message+(d.points_earned?' | +'+d.points_earned.toFixed(1)+' pkt':'');
+      st.className='text-center '+(isIn?'text-success':'text-muted')+' small';
+    }else{
+      document.getElementById('clock-status').textContent=d.message;
+      document.getElementById('clock-status').className='text-center text-danger small';
+      this.innerHTML=orig;
+    }
+  }catch(err){ this.innerHTML=orig; }
+  this.disabled=false;
 });
 </script>
 {% endblock %}
