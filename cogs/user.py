@@ -484,6 +484,8 @@ class UserCog(commands.Cog):
             e = discord.Embed(description=f'⏳ Daily już odebrane! Wróć za **{_fmt_cd(cd)}**.', color=RED)
             await msg.reply(embed=e, mention_author=False); return
         reward = random.randint(100, 200)
+        mopsy_mult = db.get_event_multiplier(msg.guild.id, 'mopsy')
+        reward = int(reward * mopsy_mult)
         db.add_cash(msg.author.id, msg.guild.id, reward)
         db.set_cooldown(msg.author.id, msg.guild.id, 'daily_last')
         w = db.get_wallet(msg.author.id, msg.guild.id)
@@ -509,6 +511,8 @@ class UserCog(commands.Cog):
         ]
         job, place = random.choice(jobs_list)
         reward = random.randint(30, 80)
+        mopsy_mult = db.get_event_multiplier(msg.guild.id, 'mopsy')
+        reward = int(reward * mopsy_mult)
         db.add_cash(msg.author.id, msg.guild.id, reward)
         db.set_cooldown(msg.author.id, msg.guild.id, 'work_last')
         w = db.get_wallet(msg.author.id, msg.guild.id)
@@ -640,6 +644,8 @@ class UserCog(commands.Cog):
             await msg.reply(embed=discord.Embed(description='❌ Nie ma takiego przedmiotu.', color=RED),
                             mention_author=False); return
         _, name, cost, pts = item
+        discount = db.get_event_multiplier(msg.guild.id, 'shop')
+        cost = int(cost * (1.0 - discount))
         w = db.get_wallet(msg.author.id, msg.guild.id)
         if w['cash'] < cost:
             brakuje = cost - w['cash']
@@ -1351,6 +1357,8 @@ class UserCog(commands.Cog):
         weights = [25, 20, 15, 5, 10, 8, 10, 5, 2]
         name, mn, mx = random.choices(catches, weights=weights, k=1)[0]
         reward = random.randint(mn, mx) if mx > 0 else 0
+        mopsy_mult = db.get_event_multiplier(msg.guild.id, 'mopsy')
+        reward = int(reward * mopsy_mult)
         db.add_cash(msg.author.id, msg.guild.id, reward)
         db.set_cooldown(msg.author.id, msg.guild.id, 'fish_last')
         w = db.get_wallet(msg.author.id, msg.guild.id)
@@ -1381,6 +1389,8 @@ class UserCog(commands.Cog):
         weights = [20, 18, 10, 20, 15, 10, 5, 2]
         name, mn, mx = random.choices(finds, weights=weights, k=1)[0]
         reward = random.randint(mn, mx) if mx > 0 else 0
+        mopsy_mult = db.get_event_multiplier(msg.guild.id, 'mopsy')
+        reward = int(reward * mopsy_mult)
         db.add_cash(msg.author.id, msg.guild.id, reward)
         db.set_cooldown(msg.author.id, msg.guild.id, 'mine_last')
         w = db.get_wallet(msg.author.id, msg.guild.id)
@@ -1411,6 +1421,8 @@ class UserCog(commands.Cog):
         weights = [20, 18, 15, 15, 12, 8, 2, 10]
         name, mn, mx = random.choices(prey, weights=weights, k=1)[0]
         reward = random.randint(mn, mx) if mx > 0 else 0
+        mopsy_mult = db.get_event_multiplier(msg.guild.id, 'mopsy')
+        reward = int(reward * mopsy_mult)
         db.add_cash(msg.author.id, msg.guild.id, reward)
         db.set_cooldown(msg.author.id, msg.guild.id, 'hunt_last')
         w = db.get_wallet(msg.author.id, msg.guild.id)

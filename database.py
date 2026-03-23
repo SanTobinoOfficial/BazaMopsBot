@@ -236,6 +236,22 @@ def init_db():
                 selected_at   TEXT    DEFAULT (datetime('now')),
                 UNIQUE(user_id, guild_id, job_id)
             );
+
+            CREATE TABLE IF NOT EXISTS events (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id    INTEGER NOT NULL,
+                name        TEXT NOT NULL,
+                description TEXT    DEFAULT '',
+                type        TEXT    NOT NULL DEFAULT 'custom',
+                value       REAL    DEFAULT 2.0,
+                emoji       TEXT    DEFAULT '🎉',
+                color       TEXT    DEFAULT '#7289da',
+                start_at    TEXT    NOT NULL,
+                end_at      TEXT    NOT NULL,
+                is_active   INTEGER DEFAULT 1,
+                created_by  INTEGER DEFAULT NULL,
+                created_at  TEXT    DEFAULT (datetime('now'))
+            );
         ''')
         conn.commit()
         _run_migrations(conn)
@@ -830,6 +846,9 @@ def clock_out(user_id: int, guild_id: int) -> Optional[Dict]:
     effective_pph = pph + job_bonus_pph
     pts = round(hours * effective_pph, 2) if mins >= min_min else 0.0
     base_pts = round(hours * pph, 2) if mins >= min_min else 0.0
+    pts_mult = get_event_multiplier(guild_id, 'points')
+    if pts_mult != 1.0 and pts > 0:
+        pts = round(pts * pts_mult, 2)
     with _lock:
         with _get_conn() as conn:
             sess = conn.execute(
@@ -2038,3 +2057,66 @@ def check_user_command_permission(user_id: int, guild_id: int, command_name: str
     if command_name in perms:
         return bool(perms[command_name])
     return True
+
+
+# ─── Events ───────────────────────────────────────────────────────────────────
+
+def create_event(guild_id: int, name: str, description: str, etype: str,
+                 value: float, emoji: str, color: str,
+                 start_at: str, end_at: str, created_by: int = None) -> int:
+    with _lock:
+        with _get_conn() as cx:
+            cur = cx.execute(
+                '''INSERT INTO events (guild_id, name, description, type, value, emoji, color,
+                   start_at, end_at, created_by)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                (guild_id, name, description, etype, value, emoji, color,
+                 start_at, end_at, created_by))
+            cx.commit()
+            return cur.lastrowid
+
+def get_all_events(guild_id: int) -> List[Dict]:
+    with _get_conn() as cx:
+        return [dict(r) for r in cx.execute(
+            'SELECT * FROM events WHERE guild_id=? ORDER BY created_at DESC',
+            (guild_id,)).fetchall()]
+
+def get_active_events(guild_id: int) -> List[Dict]:
+    """Returns events that are currently active (within start/end time and is_active=1)."""
+    now = datetime.utcnow().isoformat()
+    with _get_conn() as cx:
+        return [dict(r) for r in cx.execute(
+            '''SELECT * FROM events WHERE guild_id=? AND is_active=1
+               AND start_at <= ? AND end_at >= ?
+               ORDER BY start_at''',
+            (guild_id, now, now)).fetchall()]
+
+def deactivate_event(event_id: int):
+    with _lock:
+        with _get_conn() as cx:
+            cx.execute('UPDATE events SET is_active=0 WHERE id=?', (event_id,))
+            cx.commit()
+
+def delete_event(event_id: int):
+    with _lock:
+        with _get_conn() as cx:
+            cx.execute('DELETE FROM events WHERE id=?', (event_id,))
+            cx.commit()
+
+def get_event_multiplier(guild_id: int, etype: str) -> float:
+    """Returns combined multiplier for active events of given type.
+    For 'shop' returns discount fraction (0.0 = no discount, 0.5 = 50% off).
+    For others returns multiplier (1.0 = no bonus, 2.0 = double)."""
+    events = get_active_events(guild_id)
+    relevant = [e for e in events if e['type'] == etype]
+    if not relevant:
+        return 1.0 if etype != 'shop' else 0.0
+    if etype == 'shop':
+        # Take highest discount
+        return max(e['value'] for e in relevant) / 100.0
+    else:
+        # Multiply all multipliers together
+        result = 1.0
+        for e in relevant:
+            result *= e['value']
+        return result

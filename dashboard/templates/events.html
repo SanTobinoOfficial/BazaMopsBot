@@ -1,0 +1,268 @@
+{% extends 'base.html' %}
+{% block title %}Eventy{% endblock %}
+{% block extra_head %}
+<style>
+  .preset-card {
+    background: rgba(255,255,255,.03); border: 1px solid #40444b;
+    border-radius: 10px; padding: 1rem; cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .preset-card:hover { border-color: var(--discord-blue); background: rgba(114,137,218,.07); }
+  .preset-card.selected { border-color: var(--discord-blue); background: rgba(114,137,218,.12); }
+  .event-row-active { border-left: 3px solid var(--discord-green); }
+  .event-row-inactive { border-left: 3px solid #40444b; opacity: .6; }
+  .event-type-badge { font-size: .72rem; padding: .2em .6em; border-radius: 4px; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h4 class="text-white mb-0 fw-bold"><i class="bi bi-calendar-event me-2" style="color:var(--discord-blue)"></i>Eventy</h4>
+    <small class="text-muted">{{ guild_name }} – aktywne bonusy i ogłoszenia dla serwera</small>
+  </div>
+  <button class="btn btn-discord" data-bs-toggle="modal" data-bs-target="#createModal">
+    <i class="bi bi-plus-lg me-1"></i>Nowy event
+  </button>
+</div>
+
+<!-- Active events banner -->
+{% if active %}
+<div class="alert mb-4" style="background:rgba(67,181,129,.1);border:1px solid rgba(67,181,129,.3);color:#43b581">
+  <strong>🟢 Aktywne teraz ({{ active|length }}):</strong>
+  {% for e in active %}
+  <span class="ms-2">{{ e.emoji }} <strong>{{ e.name }}</strong>
+    {% if e.type == 'points' %}(x{{ e.value }} punkty)
+    {% elif e.type == 'mopsy' %}(x{{ e.value }} mopsy)
+    {% elif e.type == 'shop' %}(-{{ e.value|int }}% sklep)
+    {% endif %}
+    <small class="opacity-75">do {{ e.end_at[:16].replace('T',' ') }}</small>
+  </span>
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- Events list -->
+<div class="card mb-4">
+  <div class="card-header border-0 pb-0"><span class="section-title">Wszystkie eventy</span></div>
+  <div class="card-body p-0">
+    {% if not events %}
+    <div class="p-4 text-muted text-center">Brak eventów. Utwórz pierwszy!</div>
+    {% else %}
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead><tr>
+          <th>Event</th><th>Typ</th><th>Wartość</th><th>Start</th><th>Koniec</th><th>Status</th><th></th>
+        </tr></thead>
+        <tbody>
+          {% for e in events %}
+          {% set is_now = active | selectattr('id', 'eq', e.id) | list | length > 0 %}
+          <tr class="{% if is_now %}event-row-active{% else %}event-row-inactive{% endif %}">
+            <td>
+              <span style="font-size:1.1rem">{{ e.emoji }}</span>
+              <span class="text-white fw-semibold ms-1">{{ e.name }}</span>
+              {% if e.description %}<br><small class="text-muted">{{ e.description }}</small>{% endif %}
+            </td>
+            <td>
+              {% if e.type == 'points' %}<span class="event-type-badge" style="background:rgba(114,137,218,.2);color:var(--discord-blue)">Punkty</span>
+              {% elif e.type == 'mopsy' %}<span class="event-type-badge" style="background:rgba(67,181,129,.2);color:#43b581">Mopsy</span>
+              {% elif e.type == 'shop' %}<span class="event-type-badge" style="background:rgba(240,71,71,.2);color:#f04747">Sklep</span>
+              {% else %}<span class="event-type-badge" style="background:rgba(153,170,181,.2);color:#99aab5">Ogłosz.</span>{% endif %}
+            </td>
+            <td class="text-white fw-bold">
+              {% if e.type == 'shop' %}-{{ e.value|int }}%
+              {% elif e.type != 'custom' %}x{{ e.value }}
+              {% else %}—{% endif %}
+            </td>
+            <td class="text-muted small">{{ e.start_at[:16].replace('T',' ') }}</td>
+            <td class="text-muted small">{{ e.end_at[:16].replace('T',' ') }}</td>
+            <td>
+              {% if not e.is_active %}<span class="badge bg-secondary">Wyłączony</span>
+              {% elif is_now %}<span class="badge" style="background:rgba(67,181,129,.2);color:#43b581">Aktywny</span>
+              {% else %}<span class="badge" style="background:rgba(114,137,218,.2);color:var(--discord-blue)">Zaplanowany</span>{% endif %}
+            </td>
+            <td>
+              <div class="d-flex gap-1">
+                {% if e.is_active %}
+                <button class="btn btn-sm btn-outline-warning deactivate-btn" data-id="{{ e.id }}" title="Wyłącz">
+                  <i class="bi bi-pause-fill"></i>
+                </button>
+                {% endif %}
+                <button class="btn btn-sm btn-outline-danger delete-btn" data-id="{{ e.id }}" title="Usuń">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Create Modal -->
+<div class="modal fade" id="createModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content" style="background:var(--bs-secondary-bg);border:1px solid #40444b">
+      <div class="modal-header border-0">
+        <h5 class="modal-title text-white"><i class="bi bi-calendar-plus me-2"></i>Nowy event</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <!-- Presets -->
+        <div class="mb-4">
+          <label class="section-title mb-2">Szybki preset</label>
+          <div class="row g-2">
+            {% for p in presets %}
+            <div class="col-6 col-md-4">
+              <div class="preset-card" data-preset='{{ p | tojson }}'>
+                <div style="font-size:1.4rem">{{ p.emoji }}</div>
+                <div class="text-white fw-bold" style="font-size:.9rem">{{ p.name }}</div>
+                <div class="text-muted" style="font-size:.75rem">{{ p.desc }}</div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        <hr style="border-color:#40444b">
+        <!-- Form -->
+        <div class="row g-3">
+          <div class="col-2">
+            <label class="text-muted small">Emoji</label>
+            <input id="f-emoji" class="form-control" value="🎉" style="font-size:1.3rem;text-align:center">
+          </div>
+          <div class="col-10">
+            <label class="text-muted small">Nazwa eventu</label>
+            <input id="f-name" class="form-control" placeholder="Np. Happy Day">
+          </div>
+          <div class="col-12">
+            <label class="text-muted small">Opis (opcjonalny)</label>
+            <input id="f-desc" class="form-control" placeholder="Krótki opis wyświetlany użytkownikom">
+          </div>
+          <div class="col-md-4">
+            <label class="text-muted small">Typ efektu</label>
+            <select id="f-type" class="form-select">
+              <option value="points">Mnożnik punktów</option>
+              <option value="mopsy">Mnożnik mopsów</option>
+              <option value="shop">Zniżka w sklepie (%)</option>
+              <option value="custom">Tylko ogłoszenie</option>
+            </select>
+          </div>
+          <div class="col-md-4" id="value-group">
+            <label class="text-muted small" id="value-label">Mnożnik (np. 2 = x2)</label>
+            <input id="f-value" class="form-control" type="number" step="0.1" min="1" value="2">
+          </div>
+          <div class="col-md-4">
+            <label class="text-muted small">Kolor</label>
+            <input id="f-color" class="form-control" type="color" value="#faa61a" style="height:38px">
+          </div>
+          <div class="col-md-6">
+            <label class="text-muted small">Początek</label>
+            <input id="f-start" class="form-control" type="datetime-local">
+          </div>
+          <div class="col-md-6">
+            <label class="text-muted small">Koniec</label>
+            <input id="f-end" class="form-control" type="datetime-local">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer border-0">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Anuluj</button>
+        <button class="btn btn-discord" id="create-btn"><i class="bi bi-calendar-check me-1"></i>Utwórz event</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="ev-status" class="d-none alert mt-3"></div>
+{% endblock %}
+{% block extra_js %}
+<script>
+// Set default times (now → +24h)
+(function() {
+  const now = new Date(); now.setSeconds(0,0);
+  const end = new Date(now.getTime() + 86400000);
+  function toLocal(d) {
+    return new Date(d - d.getTimezoneOffset()*60000).toISOString().slice(0,16);
+  }
+  document.getElementById('f-start').value = toLocal(now);
+  document.getElementById('f-end').value   = toLocal(end);
+})();
+
+// Type change → update label
+document.getElementById('f-type').addEventListener('change', function() {
+  const vg = document.getElementById('value-group');
+  const lbl = document.getElementById('value-label');
+  const inp = document.getElementById('f-value');
+  if (this.value === 'custom') { vg.style.display='none'; return; }
+  vg.style.display='';
+  if (this.value === 'shop') {
+    lbl.textContent = 'Zniżka w % (np. 50)';
+    inp.min=1; inp.max=100; inp.step=5; inp.value=50;
+  } else {
+    lbl.textContent = 'Mnożnik (np. 2 = x2)';
+    inp.min=1; inp.max=10; inp.step=0.1; inp.value=2;
+  }
+});
+
+// Preset click
+document.querySelectorAll('.preset-card').forEach(function(card) {
+  card.addEventListener('click', function() {
+    document.querySelectorAll('.preset-card').forEach(c => c.classList.remove('selected'));
+    this.classList.add('selected');
+    const p = JSON.parse(this.dataset.preset);
+    document.getElementById('f-name').value  = p.name;
+    document.getElementById('f-desc').value  = p.desc;
+    document.getElementById('f-emoji').value = p.emoji;
+    document.getElementById('f-type').value  = p.type;
+    document.getElementById('f-color').value = p.color;
+    document.getElementById('f-value').value = p.value;
+    document.getElementById('f-type').dispatchEvent(new Event('change'));
+  });
+});
+
+// Create
+document.getElementById('create-btn').addEventListener('click', async function() {
+  const toUTC = v => v ? new Date(v).toISOString() : '';
+  const body = {
+    name:        document.getElementById('f-name').value.trim(),
+    description: document.getElementById('f-desc').value.trim(),
+    emoji:       document.getElementById('f-emoji').value.trim() || '🎉',
+    type:        document.getElementById('f-type').value,
+    value:       parseFloat(document.getElementById('f-value').value) || 1,
+    color:       document.getElementById('f-color').value,
+    start_at:    toUTC(document.getElementById('f-start').value),
+    end_at:      toUTC(document.getElementById('f-end').value),
+  };
+  if (!body.name) { alert('Podaj nazwę eventu.'); return; }
+  if (!body.start_at || !body.end_at) { alert('Podaj daty eventu.'); return; }
+  this.disabled = true;
+  const r = await fetch(window.location.pathname + '/create', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  const d = await r.json();
+  this.disabled = false;
+  if (d.ok) { location.reload(); }
+  else { alert('Błąd: ' + (d.error || 'nieznany')); }
+});
+
+// Deactivate
+document.querySelectorAll('.deactivate-btn').forEach(function(btn) {
+  btn.addEventListener('click', async function() {
+    if (!confirm('Wyłączyć event?')) return;
+    await fetch(window.location.pathname + '/' + this.dataset.id + '/deactivate', {method:'POST'});
+    location.reload();
+  });
+});
+
+// Delete
+document.querySelectorAll('.delete-btn').forEach(function(btn) {
+  btn.addEventListener('click', async function() {
+    if (!confirm('Usunąć event?')) return;
+    await fetch(window.location.pathname + '/' + this.dataset.id + '/delete', {method:'POST'});
+    location.reload();
+  });
+});
+</script>
+{% endblock %}

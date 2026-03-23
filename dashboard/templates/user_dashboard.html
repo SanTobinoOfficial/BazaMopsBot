@@ -67,6 +67,26 @@
 {% endblock %}
 {% block content %}
 
+<!-- Active events banner -->
+{% if active_events %}
+<div class="mb-3">
+  {% for e in active_events %}
+  <div class="d-flex align-items-center gap-2 px-3 py-2 mb-2 rounded-3"
+       style="background:{{ e.color }}18;border:1px solid {{ e.color }}44">
+    <span style="font-size:1.3rem">{{ e.emoji }}</span>
+    <div>
+      <span class="fw-bold" style="color:{{ e.color }}">{{ e.name }}</span>
+      {% if e.type == 'points' %}<span class="badge ms-1" style="background:{{ e.color }}30;color:{{ e.color }}">x{{ e.value }} punkty</span>
+      {% elif e.type == 'mopsy' %}<span class="badge ms-1" style="background:{{ e.color }}30;color:{{ e.color }}">x{{ e.value }} mopsy</span>
+      {% elif e.type == 'shop' %}<span class="badge ms-1" style="background:{{ e.color }}30;color:{{ e.color }}">-{{ e.value|int }}% sklep</span>{% endif %}
+      {% if e.description %}<small class="text-muted ms-2">{{ e.description }}</small>{% endif %}
+    </div>
+    <small class="ms-auto text-muted">do {{ e.end_at[:16].replace('T',' ') }}</small>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
 <!-- Header -->
 <div class="d-flex align-items-center gap-3 mb-4">
   {% if discord_avatar %}

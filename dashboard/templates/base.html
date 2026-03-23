@@ -150,6 +150,12 @@
       </a>
     </li>
     <li class="nav-item">
+      <a class="nav-link {% if request.endpoint == 'events_page' %}active{% endif %}"
+         href="{{ url_for('events_page', guild_id=guild_id) }}">
+        <i class="bi bi-calendar-event me-2"></i>Eventy
+      </a>
+    </li>
+    <li class="nav-item">
       <a class="nav-link {% if request.endpoint == 'factions_page' %}active{% endif %}"
          href="{{ url_for('factions_page', guild_id=guild_id) }}">
         <i class="bi bi-shield-shaded me-2"></i>Frakcje

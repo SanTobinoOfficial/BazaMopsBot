@@ -604,6 +604,7 @@ def user_dashboard(guild_id):
             command_groups=COMMAND_GROUPS,
             cmd_tabs=CMD_TABS,
             user_perms=(db.get_rank_permissions(guild_id, auto_rank['id']) if auto_rank else {}),
+            active_events=db.get_active_events(guild_id),
         )
     except Exception as exc:
         import traceback
@@ -1526,6 +1527,67 @@ def delete_rank_action(guild_id, rank_id):
     db.delete_rank(rank_id)
     flash('Ranga usunięta.', 'warning')
     return redirect(url_for('ranks_page', guild_id=guild_id))
+
+
+# ─── Events (admin) ───────────────────────────────────────────────────────────
+
+EVENT_PRESETS = [
+    {'name': 'Happy Day',      'emoji': '🎉', 'color': '#faa61a', 'type': 'points', 'value': 2.0,  'desc': 'Podwójne punkty za aktywność!'},
+    {'name': 'Double Mopsy',   'emoji': '🐾', 'color': '#43b581', 'type': 'mopsy',  'value': 2.0,  'desc': 'Podwójne mopsy ze wszystkich źródeł!'},
+    {'name': 'Weekend Bonus',  'emoji': '⭐', 'color': '#7289da', 'type': 'points', 'value': 1.5,  'desc': '+50% punktów przez cały weekend!'},
+    {'name': 'Wyprzedaż 50%',  'emoji': '🏷️', 'color': '#f04747', 'type': 'shop',   'value': 50.0, 'desc': '50% zniżki na wszystko w sklepie!'},
+    {'name': 'Mega Event',     'emoji': '🚀', 'color': '#faa61a', 'type': 'points', 'value': 3.0,  'desc': 'Potrójne punkty – raz na jakiś czas!'},
+    {'name': 'Ogłoszenie',     'emoji': '📢', 'color': '#99aab5', 'type': 'custom', 'value': 1.0,  'desc': 'Event ogłoszeniowy bez bonusów'},
+]
+
+@app.route('/guild/<int:guild_id>/events', methods=['GET'])
+@login_required
+def events_page(guild_id):
+    db.ensure_guild(guild_id)
+    info = _guild_info(guild_id)
+    events = db.get_all_events(guild_id)
+    active = db.get_active_events(guild_id)
+    return render_template('events.html',
+        guild_id=guild_id,
+        guild_name=info.get('name', str(guild_id)),
+        icon_url=_guild_icon(guild_id, info.get('icon')),
+        events=events,
+        active=active,
+        presets=EVENT_PRESETS,
+    )
+
+@app.route('/guild/<int:guild_id>/events/create', methods=['POST'])
+@login_required
+def event_create(guild_id):
+    d = request.get_json() or {}
+    try:
+        eid = db.create_event(
+            guild_id=guild_id,
+            name=d.get('name', 'Event'),
+            description=d.get('description', ''),
+            etype=d.get('type', 'custom'),
+            value=float(d.get('value', 1.0)),
+            emoji=d.get('emoji', '🎉'),
+            color=d.get('color', '#7289da'),
+            start_at=d.get('start_at', datetime.utcnow().isoformat()),
+            end_at=d.get('end_at', (datetime.utcnow() + __import__('datetime').timedelta(hours=24)).isoformat()),
+            created_by=_session_discord_id(),
+        )
+        return jsonify({'ok': True, 'id': eid})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+
+@app.route('/guild/<int:guild_id>/events/<int:event_id>/deactivate', methods=['POST'])
+@login_required
+def event_deactivate(guild_id, event_id):
+    db.deactivate_event(event_id)
+    return jsonify({'ok': True})
+
+@app.route('/guild/<int:guild_id>/events/<int:event_id>/delete', methods=['POST'])
+@login_required
+def event_delete(guild_id, event_id):
+    db.delete_event(event_id)
+    return jsonify({'ok': True})
 
 
 # ─── Rank permissions (admin) ─────────────────────────────────────────────────
