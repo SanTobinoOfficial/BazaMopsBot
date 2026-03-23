@@ -553,6 +553,93 @@ CMD_TABS = {
     },
 }
 
+# Mod Panel tabs — each command has tier: 'mod' | 'officer' | 'admin'
+# Commands visible to a user = all commands where tier <= their tier
+MOD_TABS = {
+    'Moderacja': [
+        {'cmd': 'userinfo',      'icon': 'bi-person-lines-fill', 'label': 'Info gracza',    'tier': 'mod',
+         'desc': 'Profil, punkty, rangi, ostrzeżenia', 'arg': True, 'placeholder': 'ID lub nick gracza'},
+        {'cmd': 'warnings',      'icon': 'bi-exclamation-triangle','label': 'Ostrzeżenia',  'tier': 'mod',
+         'desc': 'Lista warnów gracza', 'arg': True, 'placeholder': 'ID lub nick gracza'},
+        {'cmd': 'warn',          'icon': 'bi-exclamation-circle', 'label': 'Warn',          'tier': 'mod',
+         'desc': 'Ostrzeż gracza', 'arg': True, 'placeholder': 'ID/nick powód'},
+        {'cmd': 'clearwarn',     'icon': 'bi-eraser',             'label': 'Usuń warn',     'tier': 'mod',
+         'desc': 'Usuń konkretny warn (lub wszystkie)', 'arg': True, 'placeholder': 'ID/nick [id_warnu]'},
+        {'cmd': 'note',          'icon': 'bi-sticky',             'label': 'Notatka',       'tier': 'mod',
+         'desc': 'Dodaj notatkę do profilu gracza', 'arg': True, 'placeholder': 'ID/nick treść notatki'},
+        {'cmd': 'notes',         'icon': 'bi-journal-text',       'label': 'Notatki',       'tier': 'mod',
+         'desc': 'Lista notatek gracza', 'arg': True, 'placeholder': 'ID lub nick gracza'},
+        {'cmd': 'forceclockout', 'icon': 'bi-box-arrow-right',    'label': 'Wymuś clock-out','tier': 'mod',
+         'desc': 'Zakończ sesję aktywności gracza', 'arg': True, 'placeholder': 'ID lub nick gracza'},
+        {'cmd': 'warnlb',        'icon': 'bi-list-ol',            'label': 'Warn ranking',  'tier': 'mod',
+         'desc': 'Ranking ostrzeżeń na serwerze', 'arg': False},
+    ],
+    'Administracja': [
+        {'cmd': 'addpoints',     'icon': 'bi-plus-circle',        'label': 'Dodaj punkty',  'tier': 'officer',
+         'desc': 'Dodaj punkty graczowi', 'arg': True, 'placeholder': 'ID/nick ilość'},
+        {'cmd': 'removepoints',  'icon': 'bi-dash-circle',        'label': 'Zabierz punkty','tier': 'officer',
+         'desc': 'Zabierz punkty graczowi', 'arg': True, 'placeholder': 'ID/nick ilość'},
+        {'cmd': 'setpoints',     'icon': 'bi-pencil-square',      'label': 'Ustaw punkty',  'tier': 'admin',
+         'desc': 'Ustaw dokładną liczbę punktów', 'arg': True, 'placeholder': 'ID/nick ilość'},
+        {'cmd': 'giverank',      'icon': 'bi-award',              'label': 'Nadaj rangę',   'tier': 'officer',
+         'desc': 'Nadaj specjalną rangę graczowi', 'arg': True, 'placeholder': 'ID/nick nazwa rangi'},
+        {'cmd': 'takerank',      'icon': 'bi-x-circle',           'label': 'Zabierz rangę', 'tier': 'officer',
+         'desc': 'Odbierz rangę graczowi', 'arg': True, 'placeholder': 'ID/nick nazwa rangi'},
+        {'cmd': 'addmoney',      'icon': 'bi-cash-coin',          'label': 'Dodaj mopsy',   'tier': 'officer',
+         'desc': 'Dodaj mopsy graczowi', 'arg': True, 'placeholder': 'ID/nick ilość'},
+        {'cmd': 'removemoney',   'icon': 'bi-cash',               'label': 'Zabierz mopsy', 'tier': 'officer',
+         'desc': 'Zabierz mopsy graczowi', 'arg': True, 'placeholder': 'ID/nick ilość'},
+        {'cmd': 'givejob',       'icon': 'bi-briefcase',          'label': 'Nadaj pracę',   'tier': 'officer',
+         'desc': 'Przypisz pracę cywilowi', 'arg': True, 'placeholder': 'ID/nick nazwa pracy'},
+        {'cmd': 'takejob',       'icon': 'bi-briefcase-x',        'label': 'Zabierz pracę', 'tier': 'officer',
+         'desc': 'Odbierz pracę graczowi', 'arg': True, 'placeholder': 'ID/nick nazwa pracy'},
+        {'cmd': 'assignfaction', 'icon': 'bi-shield-plus',        'label': 'Przypisz frakcję','tier': 'officer',
+         'desc': 'Przypisz gracza do frakcji', 'arg': True, 'placeholder': 'ID/nick nazwa frakcji'},
+        {'cmd': 'removefaction', 'icon': 'bi-shield-minus',       'label': 'Usuń z frakcji','tier': 'officer',
+         'desc': 'Usuń gracza z frakcji', 'arg': True, 'placeholder': 'ID lub nick gracza'},
+        {'cmd': 'serverstats',   'icon': 'bi-bar-chart-line',     'label': 'Statystyki',    'tier': 'officer',
+         'desc': 'Statystyki serwera', 'arg': False},
+        {'cmd': 'announce',      'icon': 'bi-megaphone',          'label': 'Ogłoszenie',    'tier': 'admin',
+         'desc': 'Wyślij ogłoszenie na serwer', 'arg': True, 'placeholder': 'Treść ogłoszenia'},
+    ],
+    'Discord': [
+        {'cmd': 'kick',          'icon': 'bi-door-open',          'label': 'Kick',          'tier': 'officer',
+         'desc': 'Wyrzuć gracza z serwera', 'arg': True, 'placeholder': 'ID/nick powód'},
+        {'cmd': 'ban',           'icon': 'bi-hammer',             'label': 'Ban',           'tier': 'officer',
+         'desc': 'Zbanuj gracza', 'arg': True, 'placeholder': 'ID/nick powód'},
+        {'cmd': 'unban',         'icon': 'bi-person-check',       'label': 'Unban',         'tier': 'officer',
+         'desc': 'Odbanuj gracza (ID wymagane)', 'arg': True, 'placeholder': 'Discord ID gracza'},
+        {'cmd': 'mute',          'icon': 'bi-mic-mute',           'label': 'Mute',          'tier': 'mod',
+         'desc': 'Wycisz gracza na Discord (timeout)', 'arg': True, 'placeholder': 'ID/nick czas(m) powód'},
+        {'cmd': 'purge',         'icon': 'bi-trash',              'label': 'Wyczyść czat',  'tier': 'officer',
+         'desc': 'Usuń ostatnie wiadomości (max 100)', 'arg': True, 'placeholder': 'liczba wiadomości [#kanał]'},
+    ],
+}
+
+_TIER_ORDER = {'mod': 0, 'officer': 1, 'admin': 2}
+
+
+def _get_mod_tier(guild_id: int) -> str | None:
+    """Return 'mod'/'officer'/'admin' or None based on current session roles."""
+    member_roles = [str(r) for r in (session.get('discord_roles') or [])]
+    if not member_roles:
+        return None
+    guild_cfg = db.get_guild(guild_id) or {}
+    try:
+        admin_ids   = [str(r) for r in json.loads(guild_cfg.get('admin_role_ids')   or '[]')]
+        officer_ids = [str(r) for r in json.loads(guild_cfg.get('officer_role_ids') or '[]')]
+        mod_ids     = [str(r) for r in json.loads(guild_cfg.get('mod_role_ids')     or '[]')]
+    except Exception:
+        admin_ids = officer_ids = mod_ids = []
+    if any(r in admin_ids for r in member_roles):
+        return 'admin'
+    if any(r in officer_ids for r in member_roles):
+        return 'officer'
+    if any(r in mod_ids for r in member_roles):
+        return 'mod'
+    return None
+
+
 # ─── Index ────────────────────────────────────────────────────────────────────
 
 @app.route('/')
@@ -625,6 +712,9 @@ def user_dashboard(guild_id):
             discord_avatar=session.get('discord_avatar', ''),
             command_groups=COMMAND_GROUPS,
             cmd_tabs=CMD_TABS,
+            mod_tabs=MOD_TABS,
+            mod_tier=_get_mod_tier(guild_id),
+            tier_order=_TIER_ORDER,
             user_perms=(db.get_rank_permissions(guild_id, auto_rank['id']) if auto_rank else {}),
             active_events=db.get_active_events(guild_id),
         )
@@ -1331,6 +1421,424 @@ def user_clock(guild_id):
     else:
         db.clock_in(uid, guild_id)
         return jsonify({'ok': True, 'action': 'in', 'message': 'Clock in! Sesja rozpoczęta ✅'})
+
+
+@app.route('/guild/<int:guild_id>/me/mod-run', methods=['POST'])
+@any_login_required
+def user_mod_run(guild_id):
+    """Browser-side execution of moderator commands."""
+    import re as _re
+    data   = request.get_json() or {}
+    cmd    = data.get('action', '').strip()
+    arg    = (data.get('args') or '').strip()
+    uid    = _session_discord_id()
+    if not uid:
+        return jsonify({'ok': False, 'message': 'Zaloguj się przez Discord.'})
+
+    tier = _get_mod_tier(guild_id)
+    if not tier:
+        return jsonify({'ok': False, 'message': 'Nie masz uprawnień moderacyjnych.'})
+
+    db.ensure_guild(guild_id)
+    db.ensure_user(uid, guild_id)
+
+    # ── helper: resolve "id/nick" → (target_uid, target_user) ────────────────
+    def _resolve(raw: str):
+        raw = raw.strip().lstrip('@')
+        # numeric Discord ID
+        if raw.isdigit():
+            tu = db.get_user(int(raw), guild_id)
+            return (int(raw), tu)
+        # username / display_name lookup in DB
+        raw_l = raw.lower()
+        all_u = db.get_all_users(guild_id)
+        for u in all_u:
+            if (u.get('username') or '').lower() == raw_l or \
+               (u.get('display_name') or '').lower() == raw_l:
+                return (u['user_id'], u)
+        return (None, None)
+
+    def _parse_target_rest(arg: str):
+        """Split 'target rest...' where target is first token."""
+        parts = arg.split(None, 1)
+        target_raw = parts[0] if parts else ''
+        rest = parts[1] if len(parts) > 1 else ''
+        return target_raw, rest
+
+    # Tier permission check
+    required = {
+        # mod tier
+        'userinfo': 'mod', 'warnings': 'mod', 'warn': 'mod', 'clearwarn': 'mod',
+        'note': 'mod', 'notes': 'mod', 'forceclockout': 'mod', 'warnlb': 'mod',
+        'mute': 'mod',
+        # officer tier
+        'addpoints': 'officer', 'removepoints': 'officer', 'giverank': 'officer',
+        'takerank': 'officer', 'addmoney': 'officer', 'removemoney': 'officer',
+        'givejob': 'officer', 'takejob': 'officer', 'assignfaction': 'officer',
+        'removefaction': 'officer', 'serverstats': 'officer',
+        'kick': 'officer', 'ban': 'officer', 'unban': 'officer', 'purge': 'officer',
+        # admin tier
+        'setpoints': 'admin', 'announce': 'admin',
+    }
+    cmd_tier = required.get(cmd)
+    if not cmd_tier:
+        return jsonify({'ok': False, 'message': f'Nieznana komenda: {cmd}'})
+    if _TIER_ORDER.get(tier, -1) < _TIER_ORDER.get(cmd_tier, 999):
+        return jsonify({'ok': False, 'message': f'Potrzebujesz uprawnień {cmd_tier.upper()} dla tej komendy.'})
+
+    # ── commands ──────────────────────────────────────────────────────────────
+    try:
+        if cmd == 'warnlb':
+            try:
+                wlb = db.get_warn_points_leaderboard(guild_id, limit=10)
+            except Exception:
+                wlb = []
+            if not wlb:
+                return jsonify({'ok': True, 'type': 'text', 'message': 'Brak warnów na serwerze 🎉'})
+            lines = [f'`#{i+1}` **{u.get("username","??")}** – {u.get("warn_points",0)} pkt ostrzeżeń'
+                     for i, u in enumerate(wlb)]
+            return jsonify({'ok': True, 'type': 'text', 'message': '⚠️ **Ranking ostrzeżeń**\n' + '\n'.join(lines)})
+
+        if cmd == 'serverstats':
+            stats = db.get_guild_stats(guild_id)
+            msg = (f'📊 **Statystyki serwera**\n'
+                   f'👥 Zarejestrowanych: **{stats.get("total_users",0)}**\n'
+                   f'🟢 Aktywnych teraz: **{stats.get("active_now",0)}**\n'
+                   f'⏰ Sesji łącznie: **{stats.get("total_sessions",0)}**\n'
+                   f'⭐ Punktów łącznie: **{stats.get("total_points",0):.0f}**\n'
+                   f'⚠️ Warnów: **{stats.get("warning_count",0)}**')
+            return jsonify({'ok': True, 'type': 'text', 'message': msg})
+
+        # ── commands needing a target user ──────────────────────────────────
+        if not arg:
+            return jsonify({'ok': False, 'message': 'Podaj ID lub nick gracza jako argument.'})
+
+        if cmd == 'unban':
+            # unban by Discord user ID
+            target_id_str = arg.strip()
+            if not target_id_str.isdigit():
+                return jsonify({'ok': False, 'message': 'Podaj Discord ID gracza do odbanowania.'})
+            resp, err = _dpost(f'/guilds/{guild_id}/bans/{target_id_str}', {})
+            # unban is DELETE, not POST — handle manually
+            token = _tok()
+            r = requests.delete(f'{DISCORD_API}/guilds/{guild_id}/bans/{target_id_str}',
+                                headers={'Authorization': f'Bot {token}'})
+            if r.status_code in (200, 204):
+                return jsonify({'ok': True, 'type': 'text', 'message': f'✅ Odbanowano użytkownika `{target_id_str}`'})
+            return jsonify({'ok': False, 'message': f'Błąd Discord: {r.status_code} – {r.text[:100]}'})
+
+        if cmd == 'purge':
+            # purge N messages from a channel – needs channel_id
+            parts = arg.split()
+            count = int(parts[0]) if parts and parts[0].isdigit() else 10
+            count = max(1, min(count, 100))
+            guild_cfg = db.get_guild(guild_id) or {}
+            log_ch = guild_cfg.get('log_channel_id')
+            if not log_ch:
+                return jsonify({'ok': False, 'message': 'Brak skonfigurowanego kanału (logi). Podaj ID kanału.'})
+            # get messages to delete
+            msgs_data = _dget(f'/channels/{log_ch}/messages?limit={count}')
+            if not msgs_data:
+                return jsonify({'ok': False, 'message': 'Nie udało się pobrać wiadomości.'})
+            msg_ids = [m['id'] for m in msgs_data]
+            if len(msg_ids) == 1:
+                token = _tok()
+                requests.delete(f'{DISCORD_API}/channels/{log_ch}/messages/{msg_ids[0]}',
+                                headers={'Authorization': f'Bot {token}'})
+            else:
+                _dpost(f'/channels/{log_ch}/messages/bulk-delete', {'messages': msg_ids})
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'🗑️ Usunięto {len(msg_ids)} wiadomości.'})
+
+        target_raw, rest = _parse_target_rest(arg)
+        t_uid, t_user = _resolve(target_raw)
+
+        if cmd == 'userinfo':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            db.ensure_user(t_uid, guild_id)
+            t_user = db.get_user(t_uid, guild_id) or {}
+            rank = db.get_user_auto_rank(t_uid, guild_id)
+            specials = db.get_user_special_ranks(t_uid, guild_id)
+            warns = db.get_warnings(t_uid, guild_id)
+            wallet = db.get_wallet(t_uid, guild_id)
+            faction_m = None
+            try:
+                faction_m = db.get_user_faction_membership(t_uid, guild_id)
+            except Exception:
+                pass
+            msg = (f'👤 **{t_user.get("display_name") or t_user.get("username","??")}** '
+                   f'`({t_uid})`\n'
+                   f'⭐ Punkty: **{t_user.get("points",0):.0f}** | '
+                   f'🐾 Mopsy: **{wallet.get("cash",0):.0f}** (bank: {wallet.get("bank",0):.0f})\n'
+                   f'🏅 Ranga: **{rank["name"] if rank else "Brak"}**')
+            if specials:
+                msg += f'\n⚔️ Specjalne: {", ".join(r["name"] for r in specials)}'
+            if faction_m:
+                msg += f'\n🔰 Frakcja: **{faction_m.get("faction_name","?")}**'
+            msg += f'\n⚠️ Warny: **{len(warns)}**'
+            if t_user.get('is_banned'):
+                msg += '\n🔨 **ZBANOWANY**'
+            return jsonify({'ok': True, 'type': 'text', 'message': msg})
+
+        if cmd == 'warnings':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            warns = db.get_warnings(t_uid, guild_id)
+            if not warns:
+                return jsonify({'ok': True, 'type': 'text',
+                                'message': f'✅ Brak ostrzeżeń dla **{t_user.get("username","??") if t_user else target_raw}**'})
+            lines = [f'`#{w["id"]}` {w.get("reason","?")} — <t:{int(w.get("created_at",0))}:R>'
+                     if isinstance(w.get('created_at'), (int, float))
+                     else f'`#{w["id"]}` {w.get("reason","?")}'
+                     for w in warns]
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'⚠️ **Ostrzeżenia gracza**\n' + '\n'.join(lines)})
+
+        if cmd == 'warn':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            reason = rest or 'Brak powodu'
+            db.add_warning(t_uid, guild_id, reason=reason, moderator_id=uid)
+            db.log_action(guild_id, 'warn', uid, t_uid, reason)
+            name = t_user.get('username','??') if t_user else str(t_uid)
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'⚠️ Ostrzeżono **{name}**: {reason}'})
+
+        if cmd == 'clearwarn':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            warn_id = int(rest) if rest.isdigit() else None
+            count = db.clear_warnings(t_uid, guild_id, warn_id)
+            name = t_user.get('username','??') if t_user else str(t_uid)
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'✅ Usunięto {count} warn(ów) dla **{name}**'})
+
+        if cmd == 'note':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            if not rest:
+                return jsonify({'ok': False, 'message': 'Podaj treść notatki.'})
+            db.add_note(t_uid, guild_id, rest, author_id=uid)
+            name = t_user.get('username','??') if t_user else str(t_uid)
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'📝 Dodano notatkę do profilu **{name}**'})
+
+        if cmd == 'notes':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            notes = db.get_notes(t_uid, guild_id)
+            if not notes:
+                return jsonify({'ok': True, 'type': 'text',
+                                'message': f'Brak notatek dla gracza.'})
+            name = t_user.get('username','??') if t_user else str(t_uid)
+            lines = [f'`#{n["id"]}` {n.get("content","?")}' for n in notes]
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'📝 **Notatki – {name}**\n' + '\n'.join(lines)})
+
+        if cmd == 'forceclockout':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            t_u2 = db.get_user(t_uid, guild_id)
+            if not t_u2 or not t_u2.get('is_clocked_in'):
+                return jsonify({'ok': False, 'message': 'Gracz nie jest zalogowany.'})
+            db.clock_out(t_uid, guild_id)
+            name = t_user.get('username','??') if t_user else str(t_uid)
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'✅ Clock-out wymuszony dla **{name}**'})
+
+        if cmd == 'mute':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            # rest = "czas(m) powód" e.g. "10 spam"
+            parts2 = rest.split(None, 1)
+            duration_min = 10
+            reason = 'Brak powodu'
+            if parts2:
+                if parts2[0].isdigit():
+                    duration_min = int(parts2[0])
+                    reason = parts2[1] if len(parts2) > 1 else reason
+                else:
+                    reason = rest
+            # Discord timeout: PATCH /guilds/{guild}/members/{user}
+            import datetime as _dt
+            until = (_dt.datetime.now(_dt.timezone.utc) +
+                     _dt.timedelta(minutes=duration_min)).isoformat()
+            res, err = _dpatch(f'/guilds/{guild_id}/members/{t_uid}',
+                               {'communication_disabled_until': until})
+            name = t_user.get('username','??') if t_user else str(t_uid)
+            if err and 'None' not in str(err):
+                return jsonify({'ok': False, 'message': f'Błąd Discord: {err}'})
+            db.log_action(guild_id, 'mute', uid, t_uid, reason)
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'🔇 **{name}** wyciszony na {duration_min} min. Powód: {reason}'})
+
+        if cmd == 'addpoints':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            if not rest.lstrip('-').isdigit():
+                return jsonify({'ok': False, 'message': 'Podaj liczbę punktów.'})
+            pts = float(rest)
+            db.add_points(t_uid, guild_id, pts, note=f'Admin: addpoints by {uid}')
+            name = t_user.get('username','??') if t_user else str(t_uid)
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'✅ Dodano **{pts:.0f}** pkt dla **{name}**'})
+
+        if cmd == 'removepoints':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            if not rest.lstrip('-').isdigit():
+                return jsonify({'ok': False, 'message': 'Podaj liczbę punktów.'})
+            pts = float(rest)
+            db.add_points(t_uid, guild_id, -pts, note=f'Admin: removepoints by {uid}')
+            name = t_user.get('username','??') if t_user else str(t_uid)
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'✅ Odjęto **{pts:.0f}** pkt od **{name}**'})
+
+        if cmd == 'setpoints':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            if not rest.lstrip('-').isdigit():
+                return jsonify({'ok': False, 'message': 'Podaj liczbę punktów.'})
+            pts = float(rest)
+            db.set_points(t_uid, guild_id, pts)
+            name = t_user.get('username','??') if t_user else str(t_uid)
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'✅ Ustawiono **{pts:.0f}** pkt dla **{name}**'})
+
+        if cmd == 'addmoney':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            if not rest.lstrip('-').isdigit():
+                return jsonify({'ok': False, 'message': 'Podaj kwotę.'})
+            db.add_cash(t_uid, guild_id, float(rest))
+            name = t_user.get('username','??') if t_user else str(t_uid)
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'✅ Dodano **{rest}** 🐾 graczowi **{name}**'})
+
+        if cmd == 'removemoney':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            if not rest.lstrip('-').isdigit():
+                return jsonify({'ok': False, 'message': 'Podaj kwotę.'})
+            db.add_cash(t_uid, guild_id, -float(rest))
+            name = t_user.get('username','??') if t_user else str(t_uid)
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'✅ Odjęto **{rest}** 🐾 od gracza **{name}**'})
+
+        if cmd == 'giverank':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            rank_obj = db.get_rank_by_name(guild_id, rest)
+            if not rank_obj:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono rangi: {rest}'})
+            db.give_special_rank(t_uid, guild_id, rank_obj['id'])
+            name = t_user.get('username','??') if t_user else str(t_uid)
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'✅ Nadano rangę **{rest}** graczowi **{name}**'})
+
+        if cmd == 'takerank':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            rank_obj = db.get_rank_by_name(guild_id, rest)
+            if not rank_obj:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono rangi: {rest}'})
+            db.remove_special_rank(t_uid, guild_id, rank_obj['id'])
+            name = t_user.get('username','??') if t_user else str(t_uid)
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'✅ Odebrano rangę **{rest}** graczowi **{name}**'})
+
+        if cmd == 'givejob':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            job_obj = db.get_job_by_name(guild_id, rest)
+            if not job_obj:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono pracy: {rest}'})
+            db.select_job(t_uid, guild_id, job_obj['id'])
+            name = t_user.get('username','??') if t_user else str(t_uid)
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'✅ Nadano pracę **{rest}** graczowi **{name}**'})
+
+        if cmd == 'takejob':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            job_obj = db.get_job_by_name(guild_id, rest)
+            if not job_obj:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono pracy: {rest}'})
+            db.deselect_job(t_uid, guild_id, job_obj['id'])
+            name = t_user.get('username','??') if t_user else str(t_uid)
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'✅ Odebrano pracę **{rest}** graczowi **{name}**'})
+
+        if cmd == 'assignfaction':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            fac_obj = db.get_faction_by_name(guild_id, rest)
+            if not fac_obj:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono frakcji: {rest}'})
+            db.assign_faction_member(t_uid, guild_id, fac_obj['id'])
+            name = t_user.get('username','??') if t_user else str(t_uid)
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'✅ Przypisano frakcję **{rest}** graczowi **{name}**'})
+
+        if cmd == 'removefaction':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            db.remove_faction_member(t_uid, guild_id)
+            name = t_user.get('username','??') if t_user else str(t_uid)
+            return jsonify({'ok': True, 'type': 'text',
+                            'message': f'✅ Usunięto gracza **{name}** z frakcji'})
+
+        if cmd == 'kick':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            token = _tok()
+            reason_enc = _re.sub(r'[^\w \-.,!?]', '', rest or 'Brak powodu')[:128]
+            r = requests.delete(
+                f'{DISCORD_API}/guilds/{guild_id}/members/{t_uid}',
+                headers={'Authorization': f'Bot {token}', 'X-Audit-Log-Reason': reason_enc})
+            if r.status_code in (200, 204):
+                db.log_action(guild_id, 'kick', uid, t_uid, rest or 'Brak powodu')
+                name = t_user.get('username','??') if t_user else str(t_uid)
+                return jsonify({'ok': True, 'type': 'text',
+                                'message': f'👢 Wyrzucono **{name}** z serwera. Powód: {rest or "Brak"}'})
+            return jsonify({'ok': False, 'message': f'Błąd Discord: {r.status_code}'})
+
+        if cmd == 'ban':
+            if not t_uid:
+                return jsonify({'ok': False, 'message': f'Nie znaleziono gracza: {target_raw}'})
+            token = _tok()
+            reason_enc = _re.sub(r'[^\w \-.,!?]', '', rest or 'Brak powodu')[:128]
+            r = requests.put(
+                f'{DISCORD_API}/guilds/{guild_id}/bans/{t_uid}',
+                headers={'Authorization': f'Bot {token}', 'X-Audit-Log-Reason': reason_enc,
+                         'Content-Type': 'application/json'},
+                json={'delete_message_days': 0})
+            if r.status_code in (200, 204):
+                db.update_user(t_uid, guild_id, is_banned=1)
+                db.log_action(guild_id, 'ban', uid, t_uid, rest or 'Brak powodu')
+                name = t_user.get('username','??') if t_user else str(t_uid)
+                return jsonify({'ok': True, 'type': 'text',
+                                'message': f'🔨 Zbanowano **{name}**. Powód: {rest or "Brak"}'})
+            return jsonify({'ok': False, 'message': f'Błąd Discord: {r.status_code}'})
+
+        if cmd == 'announce':
+            guild_cfg = db.get_guild(guild_id) or {}
+            ann_ch = guild_cfg.get('log_channel_id')
+            if not ann_ch:
+                return jsonify({'ok': False, 'message': 'Brak skonfigurowanego kanału ogłoszeń.'})
+            if not arg:
+                return jsonify({'ok': False, 'message': 'Podaj treść ogłoszenia.'})
+            embed = {'title': '📢 Ogłoszenie', 'description': arg,
+                     'color': 0xFAA61A,
+                     'timestamp': datetime.now(timezone.utc).isoformat()}
+            _dpost(f'/channels/{ann_ch}/messages', {'embeds': [embed]})
+            return jsonify({'ok': True, 'type': 'text', 'message': '✅ Ogłoszenie wysłane!'})
+
+        return jsonify({'ok': False, 'message': f'Nieobsługiwana komenda: {cmd}'})
+    except Exception as exc:
+        import traceback
+        return jsonify({'ok': False, 'message': f'Błąd: {exc}', 'tb': traceback.format_exc()[:300]})
 
 
 @app.route('/guild/<int:guild_id>/leaderboard')
@@ -3403,13 +3911,16 @@ def setup_mops_run(guild_id):
             results.append(f'⏭️ Ranga "{rank_def["name"]}" już istnieje')
 
     # ── 5. Faction ranks ──────────────────────────────────────────────────────
-    alpha1_fac = db.get_faction_by_name(guild_id, 'Alpha-1')
-    nu7_fac    = db.get_faction_by_name(guild_id, 'Nu-7')
+    fac_cache = {}  # {faction_name: faction_row}
+    for fac_def in MOPS_FACTIONS:
+        f = db.get_faction_by_name(guild_id, fac_def['name'])
+        if f:
+            fac_cache[fac_def['name']] = f
     for rank_def in MOPS_FACTION_RANKS:
         if db.get_rank_by_name(guild_id, rank_def['name']):
             results.append(f'⏭️ Ranga "{rank_def["name"]}" już istnieje')
             continue
-        fac    = alpha1_fac if rank_def['faction'] == 'Alpha-1' else nu7_fac
+        fac    = fac_cache.get(rank_def['faction'])
         fac_id = fac['id'] if fac else None
         # 'role' field holds the Discord role name (shared across factions)
         discord_role_name = rank_def.get('role', rank_def['name'])

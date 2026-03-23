@@ -187,6 +187,13 @@
   <li class="nav-item">
     <button class="nav-link" data-tab="narzedzia"><i class="bi bi-tools me-1"></i>Narzędzia</button>
   </li>
+  {% if mod_tier %}
+  <li class="nav-item">
+    <button class="nav-link" data-tab="modpanel" style="color:#f04747">
+      <i class="bi bi-shield-fill-exclamation me-1"></i>Mod Panel
+    </button>
+  </li>
+  {% endif %}
 </ul>
 
 <!-- ═══════════════ TAB: PROFIL ═══════════════ -->
@@ -483,6 +490,68 @@
   </div>
 </div>
 
+<!-- ═══════════════ TAB: MOD PANEL ═══════════════ -->
+{% if mod_tier %}
+<div class="tab-pane d-none" id="tab-modpanel">
+  <div class="alert d-flex gap-2 mb-3 py-2" style="background:rgba(240,71,71,.1);border:1px solid #f0474733">
+    <i class="bi bi-shield-fill-exclamation text-danger flex-shrink-0 mt-1"></i>
+    <div style="font-size:.85rem">
+      Poziom uprawnień: <strong class="text-danger">{{ mod_tier | upper }}</strong>
+      &nbsp;·&nbsp; Akcje są nieodwracalne. Wpisz ID gracza lub dokładny nick.
+    </div>
+  </div>
+
+  <!-- Mod sub-tabs -->
+  {# tier_rank: mod=0, officer=1, admin=2 — user sees commands at or below their tier #}
+  {% set user_tier_rank = tier_order[mod_tier] %}
+  <ul class="nav sub-tabs mb-3" id="modSubTabs">
+    {% for sub_name, sub_cmds in mod_tabs.items() %}
+    {% set filtered = [] %}
+    {% for c in sub_cmds %}{% if tier_order[c.tier] <= user_tier_rank %}{% if filtered.append(c) %}{% endif %}{% endif %}{% endfor %}
+    {% if filtered %}
+    <li class="nav-item">
+      <button class="nav-link {% if loop.first %}active{% endif %}"
+              data-subtab="mod-{{ sub_name | lower }}"
+              data-group="mod-subtab">
+        {{ sub_name }}
+        <span class="badge bg-secondary ms-1" style="font-size:.6rem">{{ filtered | length }}</span>
+      </button>
+    </li>
+    {% endif %}
+    {% endfor %}
+  </ul>
+
+  {% for sub_name, sub_cmds in mod_tabs.items() %}
+  {% set filtered = [] %}
+  {% for c in sub_cmds %}{% if tier_order[c.tier] <= user_tier_rank %}{% if filtered.append(c) %}{% endif %}{% endif %}{% endfor %}
+  {% if filtered %}
+  {% set sub_id = 'mod-' + sub_name | lower %}
+  <div class="subtab-pane {% if not loop.first %}d-none{% endif %}" id="{{ sub_id }}" data-group="mod-subtab">
+    <div class="row g-3">
+      {% for c in filtered %}
+      <div class="col-6 col-sm-4 col-md-3 col-lg-2">
+        <div class="cmd-card" style="border-color:{% if c.tier == 'admin' %}rgba(240,71,71,.4){% elif c.tier == 'officer' %}rgba(250,166,26,.3){% else %}rgba(67,181,129,.3){% endif %}">
+          <i class="bi {{ c.icon }} cmd-icon" style="color:{% if c.tier == 'admin' %}#f04747{% elif c.tier == 'officer' %}#faa61a{% else %}#43b581{% endif %}"></i>
+          <div class="cmd-label">{{ c.label }}</div>
+          <div class="cmd-desc">{{ c.desc }}</div>
+          <span class="badge mb-1" style="font-size:.55rem;background:{% if c.tier == 'admin' %}rgba(240,71,71,.2);color:#f04747{% elif c.tier == 'officer' %}rgba(250,166,26,.2);color:#faa61a{% else %}rgba(67,181,129,.2);color:#43b581{% endif %}">{{ c.tier }}</span>
+          {% if c.get('arg') %}
+          <input class="arg-input mod-arg" type="text" placeholder="{{ c.placeholder or 'argument' }}">
+          {% endif %}
+          <button class="use-btn mod-use-btn" data-cmd="{{ c.cmd }}"
+                  style="background:{% if c.tier == 'admin' %}rgba(240,71,71,.2){% elif c.tier == 'officer' %}rgba(250,166,26,.15){% else %}rgba(67,181,129,.2){% endif %}">
+            <i class="bi bi-play-fill me-1"></i>Wykonaj
+          </button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
 <!-- Result box -->
 <div id="result-box" class="d-none">
   <div class="card">
@@ -500,9 +569,10 @@
 {% block extra_js %}
 {{ super() }}
 <script>
-const GUILD_ID = '{{ guild_id }}';
-const RUN_URL  = '/guild/' + GUILD_ID + '/me/run';
-const CLK_URL  = '/guild/' + GUILD_ID + '/me/clock';
+const GUILD_ID   = '{{ guild_id }}';
+const RUN_URL    = '/guild/' + GUILD_ID + '/me/run';
+const MOD_URL    = '/guild/' + GUILD_ID + '/me/mod-run';
+const CLK_URL    = '/guild/' + GUILD_ID + '/me/clock';
 
 // ── Tabs ──
 document.querySelectorAll('#mainTabs .nav-link').forEach(btn => {
@@ -517,6 +587,14 @@ document.querySelectorAll('#econSubTabs .nav-link').forEach(btn => {
   btn.addEventListener('click', function() {
     document.querySelectorAll('#econSubTabs .nav-link').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('[data-group="econ-subtab"]').forEach(p => p.classList.add('d-none'));
+    this.classList.add('active');
+    document.getElementById(this.dataset.subtab).classList.remove('d-none');
+  });
+});
+document.querySelectorAll('#modSubTabs .nav-link').forEach(btn => {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('#modSubTabs .nav-link').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('[data-group="mod-subtab"]').forEach(p => p.classList.add('d-none'));
     this.classList.add('active');
     document.getElementById(this.dataset.subtab).classList.remove('d-none');
   });
@@ -750,6 +828,7 @@ function renderRank(data){
 document.addEventListener('click', async function(e){
   const btn=e.target.closest('.use-btn');
   if(!btn) return;
+  const isMod=btn.classList.contains('mod-use-btn');
   const card=btn.closest('.cmd-card');
   const cmd=btn.dataset.cmd;
   const argIn=card.querySelector('.arg-input');
@@ -763,7 +842,8 @@ document.addEventListener('click', async function(e){
   const orig=btn.innerHTML; btn.disabled=true;
   btn.innerHTML='<span class="spinner-border spinner-border-sm"></span>';
   try{
-    const r=await fetch(RUN_URL,{
+    const url=isMod?MOD_URL:RUN_URL;
+    const r=await fetch(url,{
       method:'POST',
       credentials:'same-origin',
       headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
