@@ -1,0 +1,130 @@
+{% extends 'base.html' %}
+{% block title %}Ranking{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h4 class="text-white mb-0 fw-bold">
+      <i class="bi bi-trophy me-2" style="color:var(--discord-yellow)"></i>Ranking
+    </h4>
+    <small class="text-muted">{{ guild_name }}</small>
+  </div>
+  {% if uid %}
+  <div class="text-end">
+    {% if pos_pts %}<span class="badge points-badge me-1">#{{ pos_pts }} punkty</span>{% endif %}
+    {% if pos_cash %}<span class="badge" style="background:rgba(250,166,26,.15);color:var(--discord-yellow);border:1px solid rgba(250,166,26,.3)">#{{ pos_cash }} mopsy</span>{% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<!-- Tabs -->
+<ul class="nav nav-tabs mb-4" id="lbTabs" role="tablist" style="border-color:#40444b">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="pts-tab" data-bs-toggle="tab" data-bs-target="#pts-panel"
+            type="button" role="tab" style="color:#99aab5">
+      <i class="bi bi-star me-1"></i>Punkty
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="cash-tab" data-bs-toggle="tab" data-bs-target="#cash-panel"
+            type="button" role="tab" style="color:#99aab5">
+      <i class="bi bi-coin me-1"></i>Mopsy 🐾
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content">
+  <!-- Points leaderboard -->
+  <div class="tab-pane fade show active" id="pts-panel" role="tabpanel">
+    <div class="card">
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-striped mb-0">
+            <thead>
+              <tr>
+                <th style="width:50px">#</th>
+                <th>Użytkownik</th>
+                <th>Punkty</th>
+                <th>Ranga</th>
+                <th>Streak</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for u in top_points %}
+              <tr {% if uid and u.user_id == uid %}style="background:rgba(114,137,218,.1)"{% endif %}>
+                <td class="fw-bold">
+                  {% if loop.index == 1 %}<span style="color:#FFD700">🥇</span>
+                  {% elif loop.index == 2 %}<span style="color:#C0C0C0">🥈</span>
+                  {% elif loop.index == 3 %}<span style="color:#CD7F32">🥉</span>
+                  {% else %}<span class="text-muted">{{ loop.index }}</span>{% endif %}
+                </td>
+                <td>
+                  <span class="text-white">{{ u.display_name or u.username or u.user_id }}</span>
+                  {% if uid and u.user_id == uid %}
+                  <span class="badge ms-1" style="background:rgba(114,137,218,.3);color:var(--discord-blue);font-size:.65rem">Ty</span>
+                  {% endif %}
+                </td>
+                <td class="fw-semibold text-white">{{ (u.points or 0) | r2 }}</td>
+                <td>
+                  {% if u.streak_days and u.streak_days > 0 %}
+                  <span class="text-muted small">🔥 {{ u.streak_days }}d</span>
+                  {% else %}—{% endif %}
+                </td>
+                <td>
+                  {% if u.is_clocked_in %}<span class="active-dot" title="Aktywny"></span>{% else %}—{% endif %}
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="5" class="text-muted text-center py-4">Brak danych.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mopsy leaderboard -->
+  <div class="tab-pane fade" id="cash-panel" role="tabpanel">
+    <div class="card">
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-striped mb-0">
+            <thead>
+              <tr>
+                <th style="width:50px">#</th>
+                <th>Użytkownik</th>
+                <th>Gotówka 🐾</th>
+                <th>Bank 🐾</th>
+                <th>Łącznie</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for u in top_cash %}
+              <tr {% if uid and u.user_id == uid %}style="background:rgba(250,166,26,.08)"{% endif %}>
+                <td class="fw-bold">
+                  {% if loop.index == 1 %}<span style="color:#FFD700">🥇</span>
+                  {% elif loop.index == 2 %}<span style="color:#C0C0C0">🥈</span>
+                  {% elif loop.index == 3 %}<span style="color:#CD7F32">🥉</span>
+                  {% else %}<span class="text-muted">{{ loop.index }}</span>{% endif %}
+                </td>
+                <td>
+                  <span class="text-white">{{ u.display_name or u.username or u.user_id }}</span>
+                  {% if uid and u.user_id == uid %}
+                  <span class="badge ms-1" style="background:rgba(250,166,26,.3);color:var(--discord-yellow);font-size:.65rem">Ty</span>
+                  {% endif %}
+                </td>
+                <td class="fw-semibold text-white">{{ (u.cash or 0) | int }}</td>
+                <td class="text-muted">{{ (u.bank or 0) | int }}</td>
+                <td style="color:var(--discord-yellow)">{{ ((u.cash or 0) + (u.bank or 0)) | int }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="5" class="text-muted text-center py-4">Brak danych.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
