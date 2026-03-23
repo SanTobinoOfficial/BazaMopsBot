@@ -225,12 +225,31 @@ def _guild_icon(guild_id, icon_hash):
     return f'https://cdn.discordapp.com/icons/{guild_id}/{icon_hash}.png' if icon_hash else None
 
 def login_required(f):
+    """Admin-only routes (password login or Discord admin)."""
     @wraps(f)
     def dec(*a, **kw):
         if not session.get('logged_in'):
             return redirect(url_for('login'))
         return f(*a, **kw)
     return dec
+
+
+def any_login_required(f):
+    """Any authenticated user – admin password OR Discord OAuth."""
+    @wraps(f)
+    def dec(*a, **kw):
+        if not (session.get('logged_in') or session.get('discord_user_id')):
+            return redirect(url_for('login'))
+        return f(*a, **kw)
+    return dec
+
+
+def _session_is_admin():
+    return bool(session.get('logged_in'))
+
+
+def _session_discord_id():
+    return session.get('discord_user_id')
 
 def _fmt(dt_str):
     if not dt_str:
@@ -266,11 +285,169 @@ def logout():
     return redirect(url_for('login'))
 
 
+# ─── Debug (tymczasowy) ───────────────────────────────────────────────────────
+
+@app.route('/auth/debug')
+def auth_debug():
+    env_ok = {
+        'DISCORD_CLIENT_ID':     bool(os.environ.get('DISCORD_CLIENT_ID')),
+        'DISCORD_CLIENT_SECRET': bool(os.environ.get('DISCORD_CLIENT_SECRET')),
+        'DISCORD_REDIRECT_URI':  os.environ.get('DISCORD_REDIRECT_URI', '(brak)'),
+        'DISCORD_GUILD_ID':      os.environ.get('DISCORD_GUILD_ID', '(brak)'),
+        'DASHBOARD_SECRET':      bool(os.environ.get('DASHBOARD_SECRET')),
+    }
+    session_data = dict(session)
+    # Remove sensitive data
+    session_data.pop('discord_roles', None)
+    guilds = db.get_all_guilds()
+    return f'<pre style="font-family:monospace;padding:2rem;background:#1e2124;color:#fff">' \
+           f'ENV:\n{json.dumps(env_ok, indent=2)}\n\n' \
+           f'SESSION:\n{json.dumps(session_data, indent=2, default=str)}\n\n' \
+           f'DB guilds: {[g["guild_id"] for g in guilds]}\n' \
+           f'</pre>'
+
+
+# ─── Discord OAuth2 ───────────────────────────────────────────────────────────
+
+@app.route('/auth/discord')
+def auth_discord():
+    client_id = os.environ.get('DISCORD_CLIENT_ID', '')
+    redirect_uri = os.environ.get('DISCORD_REDIRECT_URI', '')
+    if not client_id:
+        flash('Logowanie przez Discord nie jest skonfigurowane.', 'danger')
+        return redirect(url_for('login'))
+    from urllib.parse import quote
+    url = (f'https://discord.com/api/oauth2/authorize'
+           f'?client_id={client_id}'
+           f'&redirect_uri={quote(redirect_uri, safe="")}'
+           f'&response_type=code&scope=identify')
+    return redirect(url)
+
+
+@app.route('/auth/callback')
+def auth_callback():
+    code = request.args.get('code')
+    error = request.args.get('error')
+    if error or not code:
+        flash(f'Logowanie anulowane przez Discord: {error or "brak kodu"}.', 'warning')
+        return redirect(url_for('login'))
+
+    client_id     = os.environ.get('DISCORD_CLIENT_ID', '')
+    client_secret = os.environ.get('DISCORD_CLIENT_SECRET', '')
+    redirect_uri  = os.environ.get('DISCORD_REDIRECT_URI', '')
+
+    if not client_id or not client_secret:
+        flash('Brak konfiguracji Discord OAuth (DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET).', 'danger')
+        return redirect(url_for('login'))
+
+    # Exchange code for access token
+    try:
+        token_resp = requests.post(
+            f'{DISCORD_API}/oauth2/token',
+            data={'client_id': client_id, 'client_secret': client_secret,
+                  'grant_type': 'authorization_code', 'code': code,
+                  'redirect_uri': redirect_uri},
+            headers={'Content-Type': 'application/x-www-form-urlencoded'},
+            timeout=10)
+    except Exception as exc:
+        flash(f'Błąd sieci przy pobieraniu tokena: {exc}', 'danger')
+        return redirect(url_for('login'))
+
+    if not token_resp.ok:
+        try:
+            detail = token_resp.json().get('error_description') or token_resp.json().get('error') or ''
+        except Exception:
+            detail = token_resp.text[:120]
+        flash(f'Discord odrzucił token ({token_resp.status_code}): {detail}. '
+              f'Sprawdź czy DISCORD_REDIRECT_URI w Secrets zgadza się z wartością w Developer Portal.', 'danger')
+        return redirect(url_for('login'))
+
+    access_token = token_resp.json().get('access_token')
+    if not access_token:
+        flash('Discord nie zwrócił access_token. Spróbuj ponownie.', 'danger')
+        return redirect(url_for('login'))
+
+    # Get user info
+    try:
+        user_resp = requests.get(f'{DISCORD_API}/users/@me',
+                                 headers={'Authorization': f'Bearer {access_token}'},
+                                 timeout=5)
+    except Exception as exc:
+        flash(f'Błąd sieci przy pobieraniu profilu: {exc}', 'danger')
+        return redirect(url_for('login'))
+
+    if not user_resp.ok:
+        flash(f'Nie można pobrać danych konta Discord ({user_resp.status_code}).', 'danger')
+        return redirect(url_for('login'))
+
+    u = user_resp.json()
+    uid       = int(u['id'])
+    username  = u.get('global_name') or u.get('username', '')
+    avatar_h  = u.get('avatar')
+    avatar_url = (f'https://cdn.discordapp.com/avatars/{uid}/{avatar_h}.png'
+                  if avatar_h else
+                  f'https://cdn.discordapp.com/embed/avatars/{uid % 5}.png')
+
+    # Determine guild (use configured ID or first in DB)
+    guild_id_str = os.environ.get('DISCORD_GUILD_ID', '').strip()
+    if guild_id_str.isdigit():
+        guild_id = int(guild_id_str)
+    else:
+        guilds = db.get_all_guilds()
+        if not guilds:
+            flash('Brak skonfigurowanego serwera (DISCORD_GUILD_ID nie ustawione i brak guilds w bazie).', 'danger')
+            return redirect(url_for('login'))
+        guild_id = guilds[0]['guild_id']
+
+    db.ensure_guild(guild_id)
+    db.ensure_user(uid, guild_id, username, username)
+
+    # Get member info using bot token (optional – if bot not in guild, still log in)
+    member = _dget(f'/guilds/{guild_id}/members/{uid}')
+    if member and isinstance(member, dict) and not member.get('code'):
+        member_roles = [str(r) for r in member.get('roles', [])]
+        nick = member.get('nick') or username
+    else:
+        member_roles = []
+        nick = username
+
+    db.ensure_user(uid, guild_id, username, nick)
+
+    # Check if admin
+    guild_cfg = db.get_guild(guild_id) or {}
+    try:
+        admin_role_ids = [str(r) for r in json.loads(guild_cfg.get('admin_role_ids') or '[]')]
+    except Exception:
+        admin_role_ids = []
+    is_admin = any(r in admin_role_ids for r in member_roles)
+
+    # Store in session
+    session['discord_user_id']   = uid
+    session['discord_username']  = nick
+    session['discord_avatar']    = avatar_url
+    session['discord_guild_id']  = guild_id
+    session['discord_is_admin']  = is_admin
+    session['discord_roles']     = member_roles
+
+    if is_admin:
+        session['logged_in'] = True  # grant full admin access
+
+    if is_admin:
+        flash(f'Zalogowano jako admin: {nick}', 'success')
+        return redirect(url_for('guild_overview', guild_id=guild_id))
+    flash(f'Zalogowano jako: {nick}', 'success')
+    return redirect(url_for('user_dashboard', guild_id=guild_id))
+
+
 # ─── Index ────────────────────────────────────────────────────────────────────
 
 @app.route('/')
-@login_required
+@any_login_required
 def index():
+    # Discord user without admin → redirect to their personal dashboard
+    if not session.get('logged_in') and session.get('discord_guild_id'):
+        return redirect(url_for('user_dashboard', guild_id=session['discord_guild_id']))
+
     guilds_cfg = db.get_all_guilds()
     guilds = []
     for cfg in guilds_cfg:
@@ -280,6 +457,94 @@ def index():
     if len(guilds) == 1:
         return redirect(url_for('guild_overview', guild_id=guilds[0]['guild_id']))
     return render_template('index.html', guilds=guilds)
+
+
+# ─── User dashboard (Discord-logged-in non-admin) ─────────────────────────────
+
+@app.route('/guild/<int:guild_id>/me')
+@any_login_required
+def user_dashboard(guild_id):
+    try:
+        db.ensure_guild(guild_id)
+        info = _guild_info(guild_id)
+        uid = _session_discord_id()
+        # Admin password users without discord id can still visit; show empty profile note
+        user = db.get_user(uid, guild_id) if uid else None
+        if uid:
+            db.ensure_user(uid, guild_id)
+            user = db.get_user(uid, guild_id)
+        auto_rank   = db.get_user_auto_rank(uid, guild_id) if uid else None
+        next_rank   = db.get_user_next_rank(uid, guild_id) if uid else None
+        specials    = db.get_user_special_ranks(uid, guild_id) if uid else []
+        sessions    = db.get_user_sessions(uid, guild_id, limit=10) if uid else []
+        wallet      = db.get_wallet(uid, guild_id) if uid else {'cash': 0, 'bank': 0}
+        try:
+            user_faction = db.get_user_faction_membership(uid, guild_id) if uid else None
+        except Exception:
+            user_faction = None
+        try:
+            user_jobs = db.get_user_jobs(uid, guild_id) if uid else []
+        except Exception:
+            user_jobs = []
+        # Rank progress
+        progress = 0
+        if auto_rank and next_rank and uid and user:
+            cur      = user.get('points', 0) or 0
+            req_cur  = auto_rank.get('required_points', 0) or 0
+            req_next = next_rank.get('required_points', 1) or 1
+            span = req_next - req_cur
+            if span > 0:
+                progress = min(100, int((cur - req_cur) / span * 100))
+        # Leaderboard position
+        lb = db.get_leaderboard(guild_id, limit=9999)
+        lb_position = next((i+1 for i, u in enumerate(lb) if u['user_id'] == uid), None) if uid else None
+        return render_template('user_dashboard.html',
+            guild_id=guild_id,
+            guild_name=info.get('name', str(guild_id)),
+            icon_url=_guild_icon(guild_id, info.get('icon')),
+            user=user, uid=uid,
+            auto_rank=auto_rank, next_rank=next_rank, specials=specials,
+            sessions=sessions, wallet=wallet,
+            user_faction=user_faction, user_jobs=user_jobs,
+            progress=progress, lb_position=lb_position,
+            discord_username=session.get('discord_username', ''),
+            discord_avatar=session.get('discord_avatar', ''),
+        )
+    except Exception as exc:
+        import traceback
+        tb = traceback.format_exc()
+        return f'<pre style="background:#1e2124;color:#f04747;padding:2rem;font-family:monospace">' \
+               f'BŁĄD w user_dashboard:\n\n{tb}\n\nUID: {_session_discord_id()}\nGuild: {guild_id}' \
+               f'</pre>', 500
+
+
+@app.route('/guild/<int:guild_id>/leaderboard')
+@any_login_required
+def leaderboard_page(guild_id):
+    db.ensure_guild(guild_id)
+    info = _guild_info(guild_id)
+    top_points = db.get_leaderboard(guild_id, limit=25)
+    # Mopsy leaderboard – sort by cash descending
+    with db._get_conn() as conn:
+        top_cash = [dict(r) for r in conn.execute(
+            'SELECT * FROM users WHERE guild_id=? AND is_banned=0 ORDER BY cash DESC LIMIT 25',
+            (guild_id,)).fetchall()]
+    uid = _session_discord_id()
+    # Current user's position in each board
+    all_users_pts = db.get_leaderboard(guild_id, limit=9999)
+    pos_pts  = next((i+1 for i, u in enumerate(all_users_pts) if u['user_id'] == uid), None) if uid else None
+    with db._get_conn() as conn:
+        all_cash = [dict(r) for r in conn.execute(
+            'SELECT * FROM users WHERE guild_id=? AND is_banned=0 ORDER BY cash DESC',
+            (guild_id,)).fetchall()]
+    pos_cash = next((i+1 for i, u in enumerate(all_cash) if u['user_id'] == uid), None) if uid else None
+    return render_template('leaderboard.html',
+        guild_id=guild_id,
+        guild_name=info.get('name', str(guild_id)),
+        icon_url=_guild_icon(guild_id, info.get('icon')),
+        top_points=top_points, top_cash=top_cash,
+        uid=uid, pos_pts=pos_pts, pos_cash=pos_cash,
+    )
 
 
 # ─── Commands reference page ──────────────────────────────────────────────────
