@@ -63,6 +63,19 @@
     content: '🔒'; position: absolute; top: .5rem; right: .7rem; font-size: .9rem;
   }
   .cmd-card { position: relative; }
+  /* 8ball animation */
+  @keyframes ball-spin { 0%{transform:rotate(0deg) scale(.5);opacity:0} 60%{transform:rotate(720deg) scale(1.1)} 100%{transform:rotate(720deg) scale(1);opacity:1} }
+  .ball-reveal { animation: ball-spin .8s ease-out forwards; font-size:3rem; }
+  /* Coinflip */
+  @keyframes coin-flip { 0%,100%{transform:rotateY(0deg)} 50%{transform:rotateY(900deg)} }
+  .coin-anim { display:inline-block; font-size:3rem; animation: coin-flip .8s ease-in-out; }
+  /* Dice */
+  @keyframes dice-roll { 0%{transform:rotate(0deg)} 100%{transform:rotate(720deg)} }
+  .dice-anim { display:inline-block; font-size:3rem; animation: dice-roll .5s ease-out; }
+  /* Trivia */
+  .trivia-btn { background:rgba(255,255,255,.05); border:1px solid #40444b; border-radius:8px;
+    color:#fff; padding:.5rem 1rem; width:100%; text-align:left; cursor:pointer; transition:all .2s; }
+  .trivia-btn:hover { background:rgba(114,137,218,.2); border-color:var(--discord-blue); }
 
   /* Result box */
   #result-box { margin-top: 1.5rem; }
@@ -530,6 +543,12 @@ function showResult(data) {
   if (t === 'rps_choose')     { renderRpsChoose();         return; }
   if (t === 'rps_result')     { renderRpsResult(data);     return; }
   if (t === 'rank')           { renderRank(data);          return; }
+  if (t === '8ball')          { render8ball(data);         return; }
+  if (t === 'coinflip')       { renderCoinflip(data);      return; }
+  if (t === 'dice')           { renderDice(data);          return; }
+  if (t === 'trivia')         { renderTrivia(data);        return; }
+  if (t === 'trivia_result')  { renderTriviaResult(data);  return; }
+  if (t === 'avatar')         { renderAvatar(data);        return; }
   // embed
   let h = `<div class="result-embed" style="border-left:4px solid ${data.color||'#7289da'}">`;
   if (data.title)       h += `<div class="fw-bold text-white mb-1">${esc(data.title)}</div>`;
@@ -757,6 +776,90 @@ document.addEventListener('click', async function(e){
   }catch(err){ showResult({ok:false,message:'Błąd sieci: '+err.message}); }
   btn.disabled=false; btn.innerHTML=orig;
 });
+
+// ── 8ball ──
+function render8ball(data) {
+  const inner = document.getElementById('result-inner');
+  inner.innerHTML = `<div class="text-center py-3">
+    <div class="text-muted small mb-2">${esc(data.question)}</div>
+    <div class="ball-reveal" style="color:${data.color}">🎱</div>
+    <div class="mt-3 fw-bold" style="color:${data.color};font-size:1.2rem">${esc(data.answer)}</div>
+  </div>`;
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+// ── Coinflip ──
+function renderCoinflip(data) {
+  const inner = document.getElementById('result-inner');
+  const isOrzl = data.result === 'ORZEŁ';
+  inner.innerHTML = `<div class="text-center py-3">
+    <div class="coin-anim">${isOrzl ? '🦅' : '💰'}</div>
+    <div class="mt-2 fw-bold text-white" style="font-size:1.3rem">${data.result}</div>
+  </div>`;
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+// ── Dice ──
+function renderDice(data) {
+  const inner = document.getElementById('result-inner');
+  const faces = ['','⚀','⚁','⚂','⚃','⚄','⚅'];
+  const face = data.sides === 6 ? (faces[data.result] || data.result) : data.result;
+  inner.innerHTML = `<div class="text-center py-3">
+    <div class="dice-anim">${data.sides===6 ? face : '🎲'}</div>
+    <div class="mt-2 fw-bold text-white" style="font-size:1.3rem">Wyrzuciłeś: <span style="color:var(--discord-blue)">${data.result}</span> / ${data.sides}</div>
+  </div>`;
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+// ── Trivia ──
+function renderTrivia(data) {
+  const inner = document.getElementById('result-inner');
+  inner.innerHTML = `<div style="background:rgba(0,0,0,.2);border-radius:12px;padding:1.2rem">
+    <div class="text-white fw-bold mb-3" style="font-size:1rem">❓ ${esc(data.question)}</div>
+    <div class="d-grid gap-2">
+      ${data.options.map(o => `<button class="trivia-btn" data-ans="${esc(o)}">${esc(o)}</button>`).join('')}
+    </div>
+    <div class="text-muted small mt-2">Odpowiedz przed wygaśnięciem!</div>
+  </div>`;
+  let secs = 15;
+  const timer = setInterval(() => {
+    secs--;
+    const footer = inner.querySelector('.text-muted.small');
+    if (footer) footer.textContent = `Pozostało: ${secs}s`;
+    if (secs <= 0) { clearInterval(timer); inner.querySelectorAll('.trivia-btn').forEach(b => b.disabled=true); }
+  }, 1000);
+  inner.querySelectorAll('.trivia-btn').forEach(btn => {
+    btn.addEventListener('click', async function() {
+      clearInterval(timer);
+      inner.querySelectorAll('.trivia-btn').forEach(b => b.disabled=true);
+      const r = await fetch(RUN_URL, {method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
+        body: JSON.stringify({action:'trivia_answer', args: this.dataset.ans})});
+      showResult(await r.json());
+    });
+  });
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+// ── Trivia result ──
+function renderTriviaResult(data) {
+  const inner = document.getElementById('result-inner');
+  const clr = data.correct ? '#43b581' : '#f04747';
+  inner.innerHTML = `<div class="text-center py-3">
+    <div style="font-size:2.5rem">${data.correct ? '✅' : '❌'}</div>
+    <div class="fw-bold mt-2" style="color:${clr};font-size:1.1rem">${esc(data.message)}</div>
+  </div>`;
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+// ── Avatar ──
+function renderAvatar(data) {
+  const inner = document.getElementById('result-inner');
+  inner.innerHTML = data.url
+    ? `<div class="text-center py-2"><img src="${data.url}" style="border-radius:50%;width:120px;height:120px;border:3px solid var(--discord-blue)" alt="${esc(data.name)}"><div class="text-white mt-2 fw-bold">${esc(data.name)}</div></div>`
+    : `<div class="text-muted text-center py-3">Brak avatara (zaloguj się przez Discord)</div>`;
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
 
 // ── Clock in/out ──
 document.getElementById('clock-btn')?.addEventListener('click',async function(){

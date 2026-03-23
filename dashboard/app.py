@@ -479,6 +479,9 @@ CMD_TABS = {
             {'cmd': 'profile', 'icon': 'bi-person-badge',   'label': 'Profil',       'desc': 'Pełny profil'},
             {'cmd': 'history', 'icon': 'bi-clock-history',  'label': 'Historia',     'desc': 'Historia punktów'},
             {'cmd': 'lb',      'icon': 'bi-trophy',         'label': 'Ranking',      'desc': 'Top graczy na serwerze'},
+            {'cmd': 'warnpoints', 'icon': 'bi-exclamation-triangle', 'label': 'Warn LB', 'desc': 'Ranking warnów'},
+            {'cmd': 'avatar',     'icon': 'bi-person-circle',        'label': 'Avatar',   'desc': 'Twój avatar'},
+            {'cmd': 'job',        'icon': 'bi-briefcase',            'label': 'Prace',    'desc': 'Lista prac i twoje stanowisko'},
         ]
     },
     'Ekonomia': {
@@ -492,6 +495,9 @@ CMD_TABS = {
             {'cmd': 'shop',  'icon': 'bi-shop',           'label': 'Sklep',    'desc': 'Lista dostępnych przedmiotów'},
             {'cmd': 'buy',   'icon': 'bi-bag-check',      'label': 'Kup',      'desc': 'Kup przedmiot ze sklepu', 'arg': True, 'placeholder': 'Nazwa przedmiotu'},
             {'cmd': 'daily', 'icon': 'bi-gift',           'label': 'Daily',    'desc': 'Dzienna nagroda (co 24h)'},
+            {'cmd': 'beg',  'icon': 'bi-hand-thumbs-up', 'label': 'Żebranie',  'desc': 'Żebraj o mopsy (cooldown 30min)'},
+            {'cmd': 'eco',  'icon': 'bi-bar-chart',      'label': 'Mopsy LB',  'desc': 'Ranking mopsów'},
+            {'cmd': 'rep',  'icon': 'bi-star',           'label': 'Rep',       'desc': 'Daj komuś reputację', 'arg': True, 'placeholder': '@nick'},
             {'cmd': 'work',  'icon': 'bi-briefcase',      'label': 'Praca',    'desc': 'Zarabiaj mopsy (cooldown 1h)'},
         ],
         'Aktywności': [
@@ -519,6 +525,11 @@ CMD_TABS = {
     },
     'Rozrywka': {
         '_flat': [
+            {'cmd': '8ball',    'icon': 'bi-magic',           'label': '8ball',    'desc': 'Magiczna kula odpowie', 'arg': True, 'placeholder': 'zadaj pytanie'},
+            {'cmd': 'coinflip', 'icon': 'bi-coin',            'label': 'Coinflip', 'desc': 'Rzuć monetą'},
+            {'cmd': 'roll',     'icon': 'bi-dice-6',          'label': 'Kości',    'desc': 'Rzuć kością', 'arg': True, 'placeholder': 'liczba ścian (np 20)'},
+            {'cmd': 'choose',   'icon': 'bi-shuffle',         'label': 'Wybierz',  'desc': 'Wybierz spośród opcji', 'arg': True, 'placeholder': 'opcja1 opcja2 opcja3'},
+            {'cmd': 'trivia',   'icon': 'bi-question-circle', 'label': 'Trivia',   'desc': 'Quiz z nagrodą w mopsach'},
             {'cmd': 'fact',    'icon': 'bi-lightbulb',      'label': 'Ciekawostka','desc': 'Losowa ciekawostka'},
             {'cmd': 'joke',    'icon': 'bi-emoji-laughing',  'label': 'Żart',      'desc': 'Losowy żart'},
             {'cmd': 'quote',   'icon': 'bi-chat-quote',      'label': 'Cytat',     'desc': 'Losowy cytat'},
@@ -530,13 +541,14 @@ CMD_TABS = {
     },
     'Narzędzia': {
         '_flat': [
-            {'cmd': 'ping',      'icon': 'bi-reception-4',   'label': 'Ping',       'desc': 'Sprawdź opóźnienie bota'},
-            {'cmd': 'uptime',    'icon': 'bi-clock',          'label': 'Uptime',     'desc': 'Jak długo bot działa'},
-            {'cmd': 'remindme',  'icon': 'bi-bell',           'label': 'Przypomnienie','desc': 'Ustaw przypomnienie', 'arg': True, 'placeholder': '1h tekst przypomnienia'},
-            {'cmd': 'tag',       'icon': 'bi-bookmark',       'label': 'Tag',        'desc': 'Wyświetl tag', 'arg': True, 'placeholder': 'nazwa tagu'},
-            {'cmd': 'taglist',   'icon': 'bi-bookmarks',      'label': 'Lista tagów','desc': 'Wszystkie dostępne tagi'},
-            {'cmd': 'roleinfo',  'icon': 'bi-shield-check',   'label': 'Info o roli','desc': 'Info o roli Discord', 'arg': True, 'placeholder': 'nazwa roli'},
-            {'cmd': 'warnpoints','icon': 'bi-exclamation-triangle','label': 'Warn punkty','desc': 'Ranking warnów punktowych'},
+            {'cmd': 'ping',       'icon': 'bi-reception-4',   'label': 'Ping',        'desc': 'Sprawdź opóźnienie bota'},
+            {'cmd': 'uptime',     'icon': 'bi-clock',          'label': 'Uptime',      'desc': 'Jak długo bot działa'},
+            {'cmd': 'remindme',   'icon': 'bi-bell',           'label': 'Przypomnienie','desc': 'Ustaw przypomnienie', 'arg': True, 'placeholder': '1h tekst przypomnienia'},
+            {'cmd': 'tag',        'icon': 'bi-bookmark',       'label': 'Tag',         'desc': 'Wyświetl tag', 'arg': True, 'placeholder': 'nazwa tagu'},
+            {'cmd': 'taglist',    'icon': 'bi-bookmarks',      'label': 'Lista tagów', 'desc': 'Wszystkie dostępne tagi'},
+            {'cmd': 'roleinfo',   'icon': 'bi-shield-check',   'label': 'Info o roli', 'desc': 'Info o roli Discord', 'arg': True, 'placeholder': 'nazwa roli'},
+            {'cmd': 'warnpoints', 'icon': 'bi-exclamation-triangle','label': 'Warn punkty','desc': 'Ranking warnów punktowych'},
+            {'cmd': 'serverinfo', 'icon': 'bi-info-circle',    'label': 'Serwer Info', 'desc': 'Statystyki serwera'},
         ]
     },
 }
@@ -1068,6 +1080,231 @@ def user_run_command(guild_id):
         return jsonify({'ok': True, 'type': 'embed', 'color': '#43b581',
             'title': '🏓 Pong!', 'description': 'Dashboard odpowiada ⚡'})
 
+    if cmd == 'beg':
+        ok_cd, left = _cooldown('beg_last', 30)
+        if not ok_cd:
+            return jsonify({'ok': False, 'message': f'Poczekaj {_fmt(left)} przed następnym żebraniem.'})
+        if _rnd.random() < 0.3:
+            db.set_cooldown(uid, guild_id, 'beg_last')
+            fails = ['Nikt ci nie dał.', 'Przechodnie cię zignorowali.', 'Zły dzień na żebranie.']
+            return jsonify({'ok': True, 'type': 'embed', 'color': '#e67e22',
+                'title': '🙏 Żebranie', 'description': _rnd.choice(fails)})
+        earn = _rnd.randint(1, 30)
+        db.add_cash(uid, guild_id, earn)
+        db.set_cooldown(uid, guild_id, 'beg_last')
+        givers = ['staruszek', 'biznesmen', 'student', 'turysta', 'dziecko']
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#e67e22',
+            'title': '🙏 Żebranie',
+            'description': f'Litościwy {_rnd.choice(givers)} dał ci **{earn} 🐾**.'})
+
+    if cmd in ('eco', 'ecolb'):
+        lb = db.get_eco_leaderboard(guild_id, limit=10)
+        rows = [f'**{i+1}.** {r.get("display_name") or r.get("username","?")} — {int((r.get("cash") or 0) + (r.get("bank") or 0))} 🐾'
+                for i, r in enumerate(lb)]
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#faa61a',
+            'title': '🐾 Top 10 — Mopsy', 'description': '\n'.join(rows) or 'Brak danych'})
+
+    if cmd == '8ball':
+        if not arg:
+            return jsonify({'ok': False, 'message': 'Zadaj pytanie: `.8ball czy dziś padnie?`'})
+        answers = [
+            ('Tak!', '#43b581'), ('Zdecydowanie tak.', '#43b581'), ('Na pewno.', '#43b581'),
+            ('Bez wątpienia.', '#43b581'), ('Raczej tak.', '#faa61a'),
+            ('Znaki wskazują na tak.', '#faa61a'), ('Zapytaj ponownie.', '#faa61a'),
+            ('Nie można przewidzieć.', '#faa61a'), ('Nie licz na to.', '#f04747'),
+            ('Moja odpowiedź brzmi nie.', '#f04747'), ('Bardzo wątpliwe.', '#f04747'),
+            ('Zdecydowanie nie.', '#f04747'),
+        ]
+        ans, color = _rnd.choice(answers)
+        return jsonify({'ok': True, 'type': '8ball', 'question': arg, 'answer': ans, 'color': color})
+
+    if cmd in ('coinflip', 'flip'):
+        result = _rnd.choice(['ORZEŁ', 'RESZKA'])
+        return jsonify({'ok': True, 'type': 'coinflip', 'result': result})
+
+    if cmd in ('roll', 'dice'):
+        try:
+            sides = int(arg) if arg and arg.isdigit() else 6
+            sides = max(2, min(sides, 1000))
+        except Exception:
+            sides = 6
+        result = _rnd.randint(1, sides)
+        return jsonify({'ok': True, 'type': 'dice', 'result': result, 'sides': sides})
+
+    if cmd in ('choose', 'wybierz'):
+        if not arg:
+            return jsonify({'ok': False, 'message': 'Użycie: `.choose opcja1 opcja2 opcja3`'})
+        opts = [o.strip() for o in arg.replace(',', ' ').split() if o.strip()]
+        if len(opts) < 2:
+            return jsonify({'ok': False, 'message': 'Podaj co najmniej 2 opcje.'})
+        chosen = _rnd.choice(opts)
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#9b59b6',
+            'title': '🎯 Wybór', 'description': f'Wybieram: **{chosen}**'})
+
+    if cmd == 'owo':
+        if not arg:
+            return jsonify({'ok': False, 'message': 'Podaj tekst.'})
+        t = arg.replace('r','w').replace('l','w').replace('R','W').replace('L','W')
+        faces = ['OwO', 'UwU', '>w<', '^w^']
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#ff69b4',
+            'title': 'OwO', 'description': f'{t} {_rnd.choice(faces)}'})
+
+    if cmd == 'uptime':
+        import time as _time
+        up = int(_time.time())
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#43b581',
+            'title': '⏱️ Uptime', 'description': 'Dashboard działa ✅'})
+
+    if cmd in ('remindme', 'remind'):
+        if not arg:
+            return jsonify({'ok': False, 'message': 'Użycie: `.remindme 10m Zadzwoń do mamy`'})
+        parts = arg.split(None, 1)
+        if len(parts) < 2:
+            return jsonify({'ok': False, 'message': 'Użycie: `.remindme 10m treść`'})
+        dur_str, text = parts
+        import re as _re
+        m2 = _re.fullmatch(r'(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?', dur_str.lower())
+        if not m2 or not any(m2.groups()):
+            return jsonify({'ok': False, 'message': 'Nieprawidłowy czas. Przykład: 10m, 1h30m, 2d'})
+        d,h,mi,s = (int(x) if x else 0 for x in m2.groups())
+        secs = d*86400+h*3600+mi*60+s
+        if secs <= 0:
+            return jsonify({'ok': False, 'message': 'Czas musi być większy niż 0.'})
+        from datetime import datetime as _dt
+        remind_at = (_dt.utcnow() + __import__('datetime').timedelta(seconds=secs)).isoformat()
+        db.add_reminder(uid, guild_id, 0, text, remind_at)
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#43b581',
+            'title': '⏰ Przypomnienie ustawione',
+            'description': f'Przypomnę ci o: **{text}**\nZa: **{dur_str}**'})
+
+    if cmd == 'warnpoints':
+        lb = db.get_warn_points_leaderboard(guild_id, limit=10)
+        if not lb:
+            return jsonify({'ok': True, 'type': 'embed', 'color': '#f04747',
+                'title': '⚠️ Warn Leaderboard', 'description': 'Nikt nie ma warnpointów.'})
+        rows = [f'**{i+1}.** {r.get("display_name") or r.get("username","?")} — {r.get("warn_points",0):.1f} wp'
+                for i, r in enumerate(lb)]
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#f04747',
+            'title': '⚠️ Warn Leaderboard', 'description': '\n'.join(rows)})
+
+    if cmd in ('tag', 'taglist'):
+        if cmd == 'taglist' or not arg:
+            tags = db.list_tags(guild_id)
+            if not tags:
+                return jsonify({'ok': True, 'type': 'embed', 'color': '#99aab5',
+                    'title': '🏷️ Tagi', 'description': 'Brak tagów. Admin tworzy tagi komendą `.tagcreate`'})
+            rows = [f'**{t["name"]}** (użycia: {t["uses"]})' for t in tags[:20]]
+            return jsonify({'ok': True, 'type': 'embed', 'color': '#7289da',
+                'title': f'🏷️ Tagi ({len(tags)})', 'description': '\n'.join(rows)})
+        tag = db.get_tag(guild_id, arg.lower())
+        if not tag:
+            return jsonify({'ok': False, 'message': f'Tag `{arg}` nie istnieje.'})
+        db.increment_tag_uses(guild_id, arg.lower())
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#7289da',
+            'title': f'🏷️ {tag["name"]}', 'description': tag['content']})
+
+    if cmd in ('roleinfo', 'ri'):
+        if not arg:
+            return jsonify({'ok': False, 'message': 'Podaj nazwę rangi: `.roleinfo Sierżant`'})
+        ranks = db.get_ranks(guild_id)
+        rank = next((r for r in ranks if arg.lower() in r['name'].lower()), None)
+        if not rank:
+            return jsonify({'ok': False, 'message': f'Nie znaleziono rangi: `{arg}`'})
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#7289da',
+            'title': f'{rank["icon"]} {rank["name"]}',
+            'fields': [
+                {'name': 'Wymagane pkt', 'value': str(rank.get('required_points', 0))},
+                {'name': 'Typ', 'value': 'Specjalna' if rank.get('is_special') else 'Auto (punkty)'},
+            ]})
+
+    if cmd in ('job', 'praca', 'jobs'):
+        all_jobs = db.get_jobs(guild_id)
+        my_jobs  = db.get_user_jobs(uid, guild_id)
+        my_ids   = {j['job_id'] for j in my_jobs}
+        user_pts = (db.get_user(uid, guild_id) or {}).get('points', 0) or 0
+        if not all_jobs:
+            return jsonify({'ok': True, 'type': 'embed', 'color': '#99aab5',
+                'title': '💼 Prace', 'description': 'Brak prac. Admin tworzy prace komendą `.createjob`'})
+        fields = []
+        for j in all_jobs:
+            status = '✅' if j['id'] in my_ids else ('🔒' if user_pts < j.get('required_points', 0) else '🔓')
+            cph = j.get('cash_per_hour', 0) or 0
+            fields.append({'name': f'{status} {j["icon"]} {j["name"]}',
+                'value': f'Req: {j["required_points"]:.0f}pkt | +{j.get("points_bonus_per_hour",0):.1f}pph | {cph:.0f}🐾/h'})
+        desc = f'**Twoje prace:** {", ".join(j["name"] for j in my_jobs) or "Brak"}'
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#7289da',
+            'title': '💼 Prace na serwerze', 'description': desc, 'fields': fields[:10]})
+
+    if cmd == 'avatar':
+        avatar_url = session.get('discord_avatar', '')
+        username = session.get('discord_username', '')
+        return jsonify({'ok': True, 'type': 'avatar', 'url': avatar_url, 'name': username})
+
+    if cmd in ('serverinfo', 'si'):
+        info2 = _guild_info(guild_id)
+        guild_cfg = db.get_guild(guild_id) or {}
+        stats = db.get_guild_stats(guild_id)
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#7289da',
+            'title': f'ℹ️ {info2.get("name", str(guild_id))}',
+            'fields': [
+                {'name': 'Użytkownicy w DB', 'value': str(stats.get('total_users', 0))},
+                {'name': 'Sesje', 'value': str(stats.get('total_sessions', 0))},
+                {'name': 'Rangi', 'value': str(stats.get('total_ranks', 0))},
+                {'name': 'Pkt/h', 'value': str(guild_cfg.get('points_per_hour', 10))},
+            ]})
+
+    if cmd == 'trivia':
+        questions = [
+            {'q':'Stolica Polski?','a':'Warszawa','opts':['Kraków','Gdańsk','Warszawa','Poznań']},
+            {'q':'Ile metrów ma km?','a':'1000','opts':['100','500','1000','10000']},
+            {'q':'Największy ocean?','a':'Spokojny','opts':['Atlantycki','Spokojny','Indyjski','Arktyczny']},
+            {'q':'Rok końca II WŚ?','a':'1945','opts':['1939','1943','1945','1950']},
+            {'q':'√144 = ?','a':'12','opts':['10','11','12','14']},
+            {'q':'Symbol Au to?','a':'Złoto','opts':['Srebro','Złoto','Miedź','Platyna']},
+            {'q':'Ile kontynentów?','a':'7','opts':['5','6','7','8']},
+        ]
+        q = _rnd.choice(questions)
+        opts = q['opts'][:]
+        _rnd.shuffle(opts)
+        session['trivia'] = {'answer': q['a'], 'reward': _rnd.randint(20, 60)}
+        return jsonify({'ok': True, 'type': 'trivia', 'question': q['q'], 'options': opts})
+
+    if cmd == 'trivia_answer':
+        t = session.get('trivia')
+        if not t:
+            return jsonify({'ok': False, 'message': 'Brak aktywnego quizu. Użyj `.trivia`'})
+        session.pop('trivia', None)
+        correct = arg.strip() == t['answer']
+        if correct:
+            db.add_cash(uid, guild_id, t['reward'])
+        return jsonify({'ok': True, 'type': 'trivia_result',
+            'correct': correct, 'answer': t['answer'],
+            'reward': t['reward'] if correct else 0,
+            'message': f'{"✅ Dobrze!" if correct else "❌ Źle!"} Odpowiedź: **{t["answer"]}**' +
+                       (f' +{t["reward"]} 🐾' if correct else '')})
+
+    if cmd == 'rep':
+        if not arg:
+            u2 = db.get_user(uid, guild_id) or {}
+            return jsonify({'ok': True, 'type': 'embed', 'color': '#9b59b6',
+                'title': '⭐ Reputacja', 'description': f'Twoje rep: **{u2.get("rep_points",0)}**'})
+        ok_cd, left = _cooldown('rep_last', 1440)
+        if not ok_cd:
+            return jsonify({'ok': False, 'message': f'Możesz dać rep raz na 24h. Poczekaj {_fmt(left)}.'})
+        all_u = db.get_all_users(guild_id)
+        target = next((u3 for u3 in all_u if arg.lstrip('@').lower() in
+                       (u3.get('display_name','') or u3.get('username','')).lower()), None)
+        if not target:
+            return jsonify({'ok': False, 'message': f'Nie znaleziono użytkownika `{arg}`.'})
+        if target['user_id'] == uid:
+            return jsonify({'ok': False, 'message': 'Nie możesz dać rep sobie.'})
+        db.update_user(int(target['user_id']), guild_id,
+                       rep_points=(target.get('rep_points') or 0) + 1)
+        db.set_cooldown(uid, guild_id, 'rep_last')
+        name = target.get('display_name') or target.get('username') or str(target['user_id'])
+        return jsonify({'ok': True, 'type': 'embed', 'color': '#9b59b6',
+            'title': '⭐ Rep dany!', 'description': f'Dałeś +1 rep dla **{name}**!'})
+
     return jsonify({'ok': False, 'message': f'Komenda `.{cmd}` niedostępna w przeglądarce.'})
 
 
@@ -1102,6 +1339,11 @@ def leaderboard_page(guild_id):
     db.ensure_guild(guild_id)
     info = _guild_info(guild_id)
     top_points = db.get_leaderboard(guild_id, limit=25)
+    # Enrich with rank name
+    for u in top_points:
+        r = db.get_user_auto_rank(u['user_id'], guild_id)
+        u['rank_name'] = r['name'] if r else ''
+        u['rank_icon'] = r['icon'] if r else ''
     # Mopsy leaderboard – sort by cash descending
     with db._get_conn() as conn:
         top_cash = [dict(r) for r in conn.execute(

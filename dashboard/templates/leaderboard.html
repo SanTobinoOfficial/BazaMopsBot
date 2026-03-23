@@ -65,12 +65,14 @@
                 </td>
                 <td class="fw-semibold text-white">{{ (u.points or 0) | r2 }}</td>
                 <td>
-                  {% if u.streak_days and u.streak_days > 0 %}
-                  <span class="text-muted small">🔥 {{ u.streak_days }}d</span>
+                  {% if u.rank_name %}
+                  <span class="text-white">{{ u.rank_icon }} {{ u.rank_name }}</span>
                   {% else %}—{% endif %}
                 </td>
                 <td>
-                  {% if u.is_clocked_in %}<span class="active-dot" title="Aktywny"></span>{% else %}—{% endif %}
+                  {% if u.streak_days and u.streak_days > 0 %}
+                  <span style="color:#f04747">🔥 {{ u.streak_days }}d</span>
+                  {% else %}—{% endif %}
                 </td>
               </tr>
               {% else %}
