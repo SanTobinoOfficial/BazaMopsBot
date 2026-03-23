@@ -459,6 +459,78 @@ COMMAND_GROUPS = {
     'Narzędzia':   ['ping', 'uptime', 'remindme', 'tag', 'taglist', 'roleinfo'],
 }
 
+# Structured tabs for user dashboard (tab → subtab → commands with meta)
+CMD_TABS = {
+    'Profil': {
+        '_flat': [
+            {'cmd': 'points',  'icon': 'bi-star',          'label': 'Punkty',       'desc': 'Sprawdź swoje punkty'},
+            {'cmd': 'rank',    'icon': 'bi-award',          'label': 'Ranga',        'desc': 'Twoja aktualna ranga'},
+            {'cmd': 'level',   'icon': 'bi-bar-chart',      'label': 'Level',        'desc': 'Postęp do następnej rangi'},
+            {'cmd': 'profile', 'icon': 'bi-person-badge',   'label': 'Profil',       'desc': 'Pełny profil'},
+            {'cmd': 'history', 'icon': 'bi-clock-history',  'label': 'Historia',     'desc': 'Historia punktów'},
+            {'cmd': 'lb',      'icon': 'bi-trophy',         'label': 'Ranking',      'desc': 'Top graczy na serwerze'},
+        ]
+    },
+    'Ekonomia': {
+        'Portfel': [
+            {'cmd': 'balance',  'icon': 'bi-wallet2',        'label': 'Portfel',      'desc': 'Gotówka i bank'},
+            {'cmd': 'deposit',  'icon': 'bi-bank',           'label': 'Wpłać',        'desc': 'Wpłać mopsy do banku', 'arg': True, 'placeholder': 'Kwota lub "all"'},
+            {'cmd': 'withdraw', 'icon': 'bi-cash-stack',     'label': 'Wypłać',       'desc': 'Wypłać mopsy z banku', 'arg': True, 'placeholder': 'Kwota lub "all"'},
+            {'cmd': 'transfer', 'icon': 'bi-arrow-left-right','label': 'Przelew',     'desc': 'Wyślij mopsy innemu', 'arg': True, 'placeholder': '@nick kwota'},
+        ],
+        'Sklep': [
+            {'cmd': 'shop',  'icon': 'bi-shop',           'label': 'Sklep',    'desc': 'Lista dostępnych przedmiotów'},
+            {'cmd': 'buy',   'icon': 'bi-bag-check',      'label': 'Kup',      'desc': 'Kup przedmiot ze sklepu', 'arg': True, 'placeholder': 'Nazwa przedmiotu'},
+            {'cmd': 'daily', 'icon': 'bi-gift',           'label': 'Daily',    'desc': 'Dzienna nagroda (co 24h)'},
+            {'cmd': 'work',  'icon': 'bi-briefcase',      'label': 'Praca',    'desc': 'Zarabiaj mopsy (cooldown 1h)'},
+        ],
+        'Aktywności': [
+            {'cmd': 'fish',  'icon': 'bi-water',          'label': 'Wędkowanie', 'desc': 'Łów ryby (cooldown 45min)'},
+            {'cmd': 'mine',  'icon': 'bi-hammer',         'label': 'Kopanie',    'desc': 'Wydobywaj surowce (cooldown 1h)'},
+            {'cmd': 'hunt',  'icon': 'bi-crosshair',      'label': 'Polowanie',  'desc': 'Poluj na zwierzynę (cooldown 1h)'},
+        ],
+        'Kasyno': [
+            {'cmd': 'slots',      'icon': 'bi-grid-3x3-gap', 'label': 'Jednoręki bandyta', 'desc': 'Spróbuj szczęścia! (cooldown 2min)'},
+            {'cmd': 'blackjack',  'icon': 'bi-suit-spade',   'label': 'Blackjack',  'desc': 'Gram o mopsy z dealerem', 'arg': True, 'placeholder': 'Stawka (min 10)'},
+            {'cmd': 'highlow',    'icon': 'bi-arrow-up-down','label': 'Wyżej/Niżej','desc': 'Zgadnij czy karta jest wyższa'},
+            {'cmd': 'scratch',    'icon': 'bi-ticket-perforated','label': 'Zdrapka', 'desc': 'Kup zdrapkę za 30 🐾'},
+            {'cmd': 'rps',        'icon': 'bi-hand-index',   'label': 'Kamień Papier Nożyce', 'desc': 'Zagraj z botem'},
+        ],
+    },
+    'Społeczne': {
+        '_flat': [
+            {'cmd': 'hug',  'icon': 'bi-emoji-heart-eyes', 'label': 'Przytul',  'desc': 'Przytuл kogoś', 'arg': True, 'placeholder': '@nick'},
+            {'cmd': 'pat',  'icon': 'bi-hand-thumbs-up',   'label': 'Pogłaskaj','desc': 'Pogłaskaj kogoś', 'arg': True, 'placeholder': '@nick'},
+            {'cmd': 'slap', 'icon': 'bi-hand-index-thumb', 'label': 'Uderz',    'desc': 'Uderz kogoś', 'arg': True, 'placeholder': '@nick'},
+            {'cmd': 'gg',   'icon': 'bi-trophy-fill',      'label': 'GG',       'desc': 'Pogratuluj komuś', 'arg': True, 'placeholder': '@nick'},
+            {'cmd': 'ship', 'icon': 'bi-heart',            'label': 'Ship',     'desc': 'Sprawdź miłosną kompatybilność', 'arg': True, 'placeholder': 'imię1 imię2'},
+            {'cmd': 'rate', 'icon': 'bi-star-half',        'label': 'Oceń',     'desc': 'Oceń cokolwiek', 'arg': True, 'placeholder': 'cokolwiek'},
+        ]
+    },
+    'Rozrywka': {
+        '_flat': [
+            {'cmd': 'fact',    'icon': 'bi-lightbulb',      'label': 'Ciekawostka','desc': 'Losowa ciekawostka'},
+            {'cmd': 'joke',    'icon': 'bi-emoji-laughing',  'label': 'Żart',      'desc': 'Losowy żart'},
+            {'cmd': 'quote',   'icon': 'bi-chat-quote',      'label': 'Cytat',     'desc': 'Losowy cytat'},
+            {'cmd': 'owo',     'icon': 'bi-chat-heart',      'label': 'OwO',       'desc': 'Przetłumacz na OwO', 'arg': True, 'placeholder': 'tekst'},
+            {'cmd': 'reverse', 'icon': 'bi-arrow-repeat',    'label': 'Odwróć',    'desc': 'Odwróć tekst', 'arg': True, 'placeholder': 'tekst'},
+            {'cmd': 'upper',   'icon': 'bi-type-bold',       'label': 'CAPS',      'desc': 'Tekst wielkimi literami', 'arg': True, 'placeholder': 'tekst'},
+            {'cmd': 'lower',   'icon': 'bi-type',            'label': 'małe',      'desc': 'Tekst małymi literami', 'arg': True, 'placeholder': 'tekst'},
+        ]
+    },
+    'Narzędzia': {
+        '_flat': [
+            {'cmd': 'ping',      'icon': 'bi-reception-4',   'label': 'Ping',       'desc': 'Sprawdź opóźnienie bota'},
+            {'cmd': 'uptime',    'icon': 'bi-clock',          'label': 'Uptime',     'desc': 'Jak długo bot działa'},
+            {'cmd': 'remindme',  'icon': 'bi-bell',           'label': 'Przypomnienie','desc': 'Ustaw przypomnienie', 'arg': True, 'placeholder': '1h tekst przypomnienia'},
+            {'cmd': 'tag',       'icon': 'bi-bookmark',       'label': 'Tag',        'desc': 'Wyświetl tag', 'arg': True, 'placeholder': 'nazwa tagu'},
+            {'cmd': 'taglist',   'icon': 'bi-bookmarks',      'label': 'Lista tagów','desc': 'Wszystkie dostępne tagi'},
+            {'cmd': 'roleinfo',  'icon': 'bi-shield-check',   'label': 'Info o roli','desc': 'Info o roli Discord', 'arg': True, 'placeholder': 'nazwa roli'},
+            {'cmd': 'warnpoints','icon': 'bi-exclamation-triangle','label': 'Warn punkty','desc': 'Ranking warnów punktowych'},
+        ]
+    },
+}
+
 # ─── Index ────────────────────────────────────────────────────────────────────
 
 @app.route('/')
@@ -530,6 +602,7 @@ def user_dashboard(guild_id):
             discord_username=session.get('discord_username', ''),
             discord_avatar=session.get('discord_avatar', ''),
             command_groups=COMMAND_GROUPS,
+            cmd_tabs=CMD_TABS,
             user_perms=(db.get_rank_permissions(guild_id, auto_rank['id']) if auto_rank else {}),
         )
     except Exception as exc:
