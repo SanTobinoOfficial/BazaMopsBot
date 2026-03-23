@@ -231,11 +231,19 @@ def _guild_info(guild_id):
 def _guild_icon(guild_id, icon_hash):
     return f'https://cdn.discordapp.com/icons/{guild_id}/{icon_hash}.png' if icon_hash else None
 
+def _is_ajax():
+    """True if request was made with fetch/XHR (expects JSON back)."""
+    return (request.content_type or '').startswith('application/json') or \
+           request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+
+
 def login_required(f):
     """Admin-only routes (password login or Discord admin)."""
     @wraps(f)
     def dec(*a, **kw):
         if not session.get('logged_in'):
+            if _is_ajax():
+                return jsonify({'ok': False, 'message': 'Sesja wygasła. Odśwież stronę i zaloguj się ponownie.'}), 401
             return redirect(url_for('login'))
         return f(*a, **kw)
     return dec
@@ -246,6 +254,8 @@ def any_login_required(f):
     @wraps(f)
     def dec(*a, **kw):
         if not (session.get('logged_in') or session.get('discord_user_id')):
+            if _is_ajax():
+                return jsonify({'ok': False, 'message': 'Sesja wygasła. Odśwież stronę i zaloguj się ponownie przez Discord.'}), 401
             return redirect(url_for('login'))
         return f(*a, **kw)
     return dec
