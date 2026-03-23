@@ -203,6 +203,18 @@ class UserCog(commands.Cog):
         except ValueError:
             return None
 
+    async def _check_perm(self, msg, cmd_name: str) -> bool:
+        """Returns False and sends error if user's rank doesn't allow the command."""
+        if not msg.guild:
+            return True
+        if not db.check_user_command_permission(msg.author.id, msg.guild.id, cmd_name):
+            em = discord.Embed(
+                description=f'❌ Twoja ranga nie ma dostępu do komendy `.{cmd_name}`.',
+                color=0xf04747)
+            await msg.channel.send(embed=em)
+            return False
+        return True
+
     async def _can_use(self, member: discord.Member, guild_id: int, command_name: str) -> bool:
         perm = db.get_command_permission(guild_id, command_name)
         if perm:
@@ -449,6 +461,7 @@ class UserCog(commands.Cog):
     # ══════════════════════════════════════════════════════════════════════════
 
     async def _cmd_balance(self, msg, args):
+        if not await self._check_perm(msg, 'balance'): return
         m = self._resolve_member(msg, args[0]) if args else msg.author
         if not m:
             await msg.reply(embed=discord.Embed(description='❌ Nie znaleziono.', color=RED),
@@ -464,6 +477,7 @@ class UserCog(commands.Cog):
         await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_daily(self, msg, args):
+        if not await self._check_perm(msg, 'daily'): return
         u = db.get_user(msg.author.id, msg.guild.id)
         cd = _check_cooldown(u.get('daily_last'), 60 * 24)  # 24h
         if cd:
@@ -480,6 +494,7 @@ class UserCog(commands.Cog):
         await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_work(self, msg, args):
+        if not await self._check_perm(msg, 'work'): return
         u = db.get_user(msg.author.id, msg.guild.id)
         cd = _check_cooldown(u.get('work_last'), 60)  # 1h
         if cd:
@@ -549,6 +564,7 @@ class UserCog(commands.Cog):
         await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_deposit(self, msg, args):
+        if not await self._check_perm(msg, 'deposit'): return
         if not args:
             await msg.reply(embed=discord.Embed(description='❌ `.deposit <kwota|all>`', color=RED),
                             mention_author=False); return
@@ -574,6 +590,7 @@ class UserCog(commands.Cog):
         await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_withdraw(self, msg, args):
+        if not await self._check_perm(msg, 'withdraw'): return
         if not args:
             await msg.reply(embed=discord.Embed(description='❌ `.withdraw <kwota|all>`', color=RED),
                             mention_author=False); return
@@ -599,6 +616,7 @@ class UserCog(commands.Cog):
         await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_shop(self, msg, args):
+        if not await self._check_perm(msg, 'shop'): return
         e = discord.Embed(title=f'{COIN} Sklep – Zamiana Mopsów na Punkty', color=PURPLE)
         e.description = (
             f'Użyj `.buy <nr>` żeby kupić przedmiot.\n'
@@ -612,6 +630,7 @@ class UserCog(commands.Cog):
         await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_buy(self, msg, args):
+        if not await self._check_perm(msg, 'buy'): return
         if not args or not args[0].isdigit():
             await msg.reply(embed=discord.Embed(description='❌ `.buy <nr_przedmiotu>` – użyj `.shop` żeby zobaczyć listę.', color=RED),
                             mention_author=False); return
@@ -1053,6 +1072,7 @@ class UserCog(commands.Cog):
 
     async def _cmd_blackjack(self, msg, args):
         """Blackjack z opcjonalną stawką mopsów."""
+        if not await self._check_perm(msg, 'blackjack'): return
         bet = 0
         if args and args[0].isdigit():
             bet = int(args[0])
@@ -1138,6 +1158,7 @@ class UserCog(commands.Cog):
 
     async def _cmd_highlow(self, msg, args):
         """Zgadnij czy następna liczba będzie wyższa czy niższa."""
+        if not await self._check_perm(msg, 'highlow'): return
         current = random.randint(1, 100)
         e = discord.Embed(title='🔢 High or Low?', color=BLURPLE)
         e.description = f'Liczba to: **{current}**\nCzy następna będzie **wyższa** czy **niższa**?'
@@ -1177,6 +1198,7 @@ class UserCog(commands.Cog):
 
     async def _cmd_scratch(self, msg, args):
         """Zdrap los – postaw 30 🐾 żeby wygrać więcej."""
+        if not await self._check_perm(msg, 'scratch'): return
         COST = 30
         w = db.get_wallet(msg.author.id, msg.guild.id)
         if w['cash'] < COST:
@@ -1215,6 +1237,7 @@ class UserCog(commands.Cog):
 
     async def _cmd_rps(self, msg, args):
         """Kamień, papier, nożyce vs bot."""
+        if not await self._check_perm(msg, 'rps'): return
         if not args:
             await msg.reply(embed=discord.Embed(
                 description='❌ `.rps <kamien|papier|nozyce>` lub `rock|paper|scissors`', color=RED),
@@ -1251,6 +1274,7 @@ class UserCog(commands.Cog):
 
     async def _cmd_slots(self, msg, args):
         """Slot machine – opcjonalnie postaw mopsy."""
+        if not await self._check_perm(msg, 'slots'): return
         u = db.get_user(msg.author.id, msg.guild.id)
         cd = _check_cooldown(u.get('slots_last'), 2)  # 2min
         if cd:
@@ -1310,6 +1334,7 @@ class UserCog(commands.Cog):
         await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_fish(self, msg, args):
+        if not await self._check_perm(msg, 'fish'): return
         u = db.get_user(msg.author.id, msg.guild.id)
         cd = _check_cooldown(u.get('fish_last'), 45)  # 45min
         if cd:
@@ -1339,6 +1364,7 @@ class UserCog(commands.Cog):
         await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_mine(self, msg, args):
+        if not await self._check_perm(msg, 'mine'): return
         u = db.get_user(msg.author.id, msg.guild.id)
         cd = _check_cooldown(u.get('mine_last'), 60)  # 1h
         if cd:
@@ -1368,6 +1394,7 @@ class UserCog(commands.Cog):
         await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_hunt(self, msg, args):
+        if not await self._check_perm(msg, 'hunt'): return
         u = db.get_user(msg.author.id, msg.guild.id)
         cd = _check_cooldown(u.get('hunt_last'), 60)  # 1h
         if cd:
@@ -1401,6 +1428,7 @@ class UserCog(commands.Cog):
     # ══════════════════════════════════════════════════════════════════════════
 
     async def _cmd_hug(self, msg, args):
+        if not await self._check_perm(msg, 'hug'): return
         target = self._resolve_member(msg, args[0]) if args else None
         GIFS = [
             'https://media.giphy.com/media/od5H3PmEG5EVq/giphy.gif',
@@ -1416,6 +1444,7 @@ class UserCog(commands.Cog):
         await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_pat(self, msg, args):
+        if not await self._check_perm(msg, 'pat'): return
         target = self._resolve_member(msg, args[0]) if args else None
         GIFS = [
             'https://media.giphy.com/media/L2z7dnOduqEow/giphy.gif',
@@ -1430,6 +1459,7 @@ class UserCog(commands.Cog):
         await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_slap(self, msg, args):
+        if not await self._check_perm(msg, 'slap'): return
         target = self._resolve_member(msg, args[0]) if args else None
         e = discord.Embed(color=RED)
         if target:
@@ -1464,10 +1494,12 @@ class UserCog(commands.Cog):
     ]
 
     async def _cmd_fact(self, msg, args):
+        if not await self._check_perm(msg, 'fact'): return
         e = discord.Embed(title='💡 Ciekawostka', description=random.choice(self.FACTS), color=BLURPLE)
         await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_ship(self, msg, args):
+        if not await self._check_perm(msg, 'ship'): return
         if len(args) >= 2:
             m1 = self._resolve_member(msg, args[0])
             m2 = self._resolve_member(msg, args[1])
@@ -1496,6 +1528,7 @@ class UserCog(commands.Cog):
         await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_rate(self, msg, args):
+        if not await self._check_perm(msg, 'rate'): return
         if not args:
             await msg.reply(embed=discord.Embed(description='❌ `.rate <cokolwiek>`', color=RED),
                             mention_author=False); return
@@ -1564,6 +1597,7 @@ class UserCog(commands.Cog):
     ]
 
     async def _cmd_joke(self, msg, args):
+        if not await self._check_perm(msg, 'joke'): return
         setup_line, punchline = random.choice(self.JOKES)
         e = discord.Embed(title='😂 Dowcip', color=GOLD)
         e.add_field(name='❓', value=setup_line, inline=False)
@@ -1572,6 +1606,7 @@ class UserCog(commands.Cog):
         await msg.reply(embed=e, mention_author=False)
 
     async def _cmd_quote(self, msg, args):
+        if not await self._check_perm(msg, 'quote'): return
         text, author = random.choice(self.QUOTES)
         e = discord.Embed(
             description=f'*„{text}"*\n\n— **{author}**',
@@ -1621,6 +1656,7 @@ class UserCog(commands.Cog):
 
     async def _cmd_remindme(self, msg, args):
         """.remindme <czas> <wiadomość>  np. .remindme 1h30m sprawdź piekarnik"""
+        if not await self._check_perm(msg, 'remindme'): return
         if len(args) < 2:
             await msg.reply(embed=discord.Embed(
                 description='❌ `.remindme <czas> <wiadomość>`\nPrzykład: `.remindme 1h30m sprawdź piekarnik`',

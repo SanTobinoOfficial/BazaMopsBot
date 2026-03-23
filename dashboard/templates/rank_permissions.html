@@ -1,0 +1,93 @@
+{% extends 'base.html' %}
+{% block title %}Uprawnienia Rang{% endblock %}
+{% block extra_head %}
+<style>
+  .perm-table { font-size: .82rem; }
+  .perm-table th { white-space: nowrap; }
+  .perm-table td { text-align: center; vertical-align: middle; }
+  .cmd-toggle { width: 20px; height: 20px; cursor: pointer; accent-color: var(--discord-blue); }
+  .group-header { background: rgba(114,137,218,.1) !important; color: var(--discord-blue); font-weight: 700; text-align: left !important; }
+  .rank-col { font-weight: 600; color: #fff; text-align: left !important; white-space: nowrap; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h4 class="text-white mb-0 fw-bold"><i class="bi bi-key me-2" style="color:var(--discord-blue)"></i>Uprawnienia Rang</h4>
+    <small class="text-muted">{{ guild_name }} – które rangi mogą używać których komend</small>
+  </div>
+  <button class="btn btn-discord" id="save-btn">
+    <i class="bi bi-floppy me-1"></i>Zapisz zmiany
+  </button>
+</div>
+
+{% if not ranks %}
+<div class="alert alert-secondary">Brak rang. <a href="{{ url_for('ranks_page', guild_id=guild_id) }}">Utwórz rangi</a> najpierw.</div>
+{% else %}
+
+<div class="card mb-3">
+  <div class="card-body p-0" style="overflow-x:auto">
+    <table class="table table-bordered perm-table mb-0">
+      <thead>
+        <tr>
+          <th style="min-width:130px">Komenda</th>
+          {% for rank in ranks %}
+          <th style="min-width:90px">
+            {% if rank.icon %}{{ rank.icon }} {% endif %}{{ rank.name }}
+            <div class="text-muted" style="font-size:.7rem;font-weight:400">{{ rank.required_points }} pkt</div>
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for group_name, cmds in command_groups.items() %}
+        <tr>
+          <td class="group-header" colspan="{{ ranks|length + 1 }}">{{ group_name }}</td>
+        </tr>
+        {% for cmd in cmds %}
+        <tr>
+          <td class="rank-col ps-3">.{{ cmd }}</td>
+          {% for rank in ranks %}
+          {% set cur = all_perms.get(rank.id, {}).get(cmd, True) %}
+          <td>
+            <input type="checkbox" class="cmd-toggle"
+                   data-key="{{ rank.id }}_{{ cmd }}"
+                   {% if cur %}checked{% endif %}>
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div id="save-status" class="d-none alert alert-success">Zapisano!</div>
+{% endif %}
+{% endblock %}
+{% block extra_js %}
+<script>
+document.getElementById('save-btn')?.addEventListener('click', async function() {
+  const data = {};
+  document.querySelectorAll('.cmd-toggle').forEach(cb => {
+    data[cb.dataset.key] = cb.checked;
+  });
+  const r = await fetch(window.location.pathname, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data)
+  });
+  const st = document.getElementById('save-status');
+  if (r.ok) {
+    st.className = 'alert alert-success';
+    st.textContent = '✓ Zapisano uprawnienia!';
+  } else {
+    st.className = 'alert alert-danger';
+    st.textContent = '✗ Błąd zapisu.';
+  }
+  st.classList.remove('d-none');
+  setTimeout(() => st.classList.add('d-none'), 3000);
+});
+</script>
+{% endblock %}

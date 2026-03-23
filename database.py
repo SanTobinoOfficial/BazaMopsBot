@@ -355,6 +355,14 @@ def _run_migrations(conn):
             remind_at  TEXT    NOT NULL,
             done       INTEGER DEFAULT 0,
             created_at TEXT    DEFAULT (datetime('now')))""",
+        # Rank command permissions
+        """CREATE TABLE IF NOT EXISTS rank_command_permissions (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id     INTEGER NOT NULL,
+            rank_id      INTEGER NOT NULL,
+            command_name TEXT    NOT NULL,
+            allowed      INTEGER NOT NULL DEFAULT 1,
+            UNIQUE(guild_id, rank_id, command_name))""",
     ]
     for m in migrations:
         try:
@@ -1986,3 +1994,47 @@ def mark_reminder_done(reminder_id: int) -> None:
         with _get_conn() as conn:
             conn.execute('UPDATE reminders SET done=1 WHERE id=?', (reminder_id,))
             conn.commit()
+
+
+# ─── Rank command permissions ─────────────────────────────────────────────────
+
+def get_all_rank_permissions(guild_id: int) -> dict:
+    """Returns {rank_id: {command_name: allowed}} for all ranks in guild."""
+    with _get_conn() as conn:
+        rows = conn.execute(
+            'SELECT rank_id, command_name, allowed FROM rank_command_permissions WHERE guild_id=?',
+            (guild_id,)).fetchall()
+    result = {}
+    for r in rows:
+        result.setdefault(r['rank_id'], {})[r['command_name']] = bool(r['allowed'])
+    return result
+
+
+def get_rank_permissions(guild_id: int, rank_id: int) -> dict:
+    """Returns {command_name: allowed} for a rank."""
+    with _get_conn() as conn:
+        rows = conn.execute(
+            'SELECT command_name, allowed FROM rank_command_permissions WHERE guild_id=? AND rank_id=?',
+            (guild_id, rank_id)).fetchall()
+    return {r['command_name']: bool(r['allowed']) for r in rows}
+
+
+def set_rank_permission(guild_id: int, rank_id: int, command_name: str, allowed: bool):
+    with _lock:
+        with _get_conn() as conn:
+            conn.execute('''INSERT INTO rank_command_permissions (guild_id, rank_id, command_name, allowed)
+                          VALUES (?,?,?,?)
+                          ON CONFLICT(guild_id, rank_id, command_name) DO UPDATE SET allowed=excluded.allowed''',
+                         (guild_id, rank_id, command_name, int(allowed)))
+            conn.commit()
+
+
+def check_user_command_permission(user_id: int, guild_id: int, command_name: str) -> bool:
+    """Check if user can use command. Default: True (allow) if no explicit deny."""
+    auto_rank = get_user_auto_rank(user_id, guild_id)
+    if not auto_rank:
+        return True
+    perms = get_rank_permissions(guild_id, auto_rank['id'])
+    if command_name in perms:
+        return bool(perms[command_name])
+    return True

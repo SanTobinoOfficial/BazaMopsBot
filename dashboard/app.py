@@ -439,6 +439,19 @@ def auth_callback():
     return redirect(url_for('user_dashboard', guild_id=guild_id))
 
 
+# ─── Command permission groups ────────────────────────────────────────────────
+COMMAND_GROUPS = {
+    'Profil':      ['points', 'rank', 'history', 'profile', 'level'],
+    'Zegar':       ['clock'],
+    'Ranking':     ['lb', 'warnpoints'],
+    'Ekonomia':    ['balance', 'deposit', 'withdraw', 'transfer', 'shop', 'buy', 'daily', 'work'],
+    'Gry':         ['blackjack', 'highlow', 'scratch', 'rps', 'slots'],
+    'Aktywności':  ['fish', 'mine', 'hunt'],
+    'Społeczne':   ['hug', 'pat', 'slap', 'gg', 'ship', 'rate'],
+    'Rozrywka':    ['fact', 'joke', 'quote', 'owo', 'reverse', 'upper', 'lower'],
+    'Narzędzia':   ['ping', 'uptime', 'remindme', 'tag', 'taglist', 'roleinfo'],
+}
+
 # ─── Index ────────────────────────────────────────────────────────────────────
 
 @app.route('/')
@@ -509,6 +522,8 @@ def user_dashboard(guild_id):
             progress=progress, lb_position=lb_position,
             discord_username=session.get('discord_username', ''),
             discord_avatar=session.get('discord_avatar', ''),
+            command_groups=COMMAND_GROUPS,
+            user_perms=(db.get_rank_permissions(guild_id, auto_rank['id']) if auto_rank else {}),
         )
     except Exception as exc:
         import traceback
@@ -1431,6 +1446,36 @@ def delete_rank_action(guild_id, rank_id):
     db.delete_rank(rank_id)
     flash('Ranga usunięta.', 'warning')
     return redirect(url_for('ranks_page', guild_id=guild_id))
+
+
+# ─── Rank permissions (admin) ─────────────────────────────────────────────────
+
+@app.route('/guild/<int:guild_id>/rank-permissions', methods=['GET', 'POST'])
+@login_required
+def rank_permissions_page(guild_id):
+    db.ensure_guild(guild_id)
+    info = _guild_info(guild_id)
+    ranks = db.get_ranks(guild_id)
+
+    if request.method == 'POST':
+        data = request.get_json() or {}
+        for rank in ranks:
+            for cmds in COMMAND_GROUPS.values():
+                for cmd in cmds:
+                    key = f'{rank["id"]}_{cmd}'
+                    db.set_rank_permission(guild_id, rank['id'], cmd, bool(data.get(key, True)))
+        return jsonify({'ok': True})
+
+    all_perms = db.get_all_rank_permissions(guild_id)
+    # Build flat lookup: perms[rank_id][cmd] = True/False
+    return render_template('rank_permissions.html',
+        guild_id=guild_id,
+        guild_name=info.get('name', str(guild_id)),
+        icon_url=_guild_icon(guild_id, info.get('icon')),
+        ranks=ranks,
+        command_groups=COMMAND_GROUPS,
+        all_perms=all_perms,
+    )
 
 
 # ─── Config ───────────────────────────────────────────────────────────────────

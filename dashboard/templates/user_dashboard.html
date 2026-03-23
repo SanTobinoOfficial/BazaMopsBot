@@ -1,0 +1,265 @@
+{% extends 'base.html' %}
+{% block title %}Mój Profil{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h4 class="text-white mb-0 fw-bold">
+      <i class="bi bi-person-circle me-2" style="color:var(--discord-blue)"></i>Mój Profil
+    </h4>
+    <small class="text-muted">{{ guild_name }}</small>
+  </div>
+  <a href="{{ url_for('leaderboard_page', guild_id=guild_id) }}" class="btn btn-sm btn-outline-warning">
+    <i class="bi bi-trophy me-1"></i>Ranking
+  </a>
+</div>
+
+{% if not uid %}
+<div class="alert alert-secondary">
+  Zalogowałeś się hasłem admina – brak powiązanego konta Discord.
+  <a href="{{ url_for('guild_overview', guild_id=guild_id) }}" class="alert-link">Przejdź do panelu admina</a>.
+</div>
+{% else %}
+
+<div class="row g-3 mb-4">
+  <!-- Profile card -->
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body text-center py-4">
+        {% if discord_avatar %}
+        <img src="{{ discord_avatar }}" class="avatar-lg mb-3" alt="">
+        {% else %}
+        <div class="avatar-lg avatar-placeholder rounded-circle mx-auto mb-3" style="font-size:1.6rem">
+          {{ (discord_username or '?')[0].upper() }}
+        </div>
+        {% endif %}
+        <h5 class="text-white fw-bold mb-1">{{ discord_username or (user.display_name if user else '—') }}</h5>
+        {% if user_faction %}
+        <span class="badge mb-2" style="background:rgba(114,137,218,.2);color:var(--discord-blue);border:1px solid rgba(114,137,218,.3)">
+          {{ user_faction.faction_icon }} {{ user_faction.faction_name }}
+        </span>
+        {% endif %}
+        {% if auto_rank %}
+        <div class="mt-2">
+          <span class="badge points-badge">{{ auto_rank.icon }} {{ auto_rank.name }}</span>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="col-md-8">
+    <div class="row g-3 h-100">
+      <div class="col-6">
+        <div class="card stat-card green h-100">
+          <div class="card-body">
+            <div class="text-muted small mb-1">Punkty</div>
+            <div class="stat-number">{{ (user.points or 0) | r2 }}</div>
+            {% if lb_position %}
+            <small class="text-muted">#{{ lb_position }} na serwerze</small>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      <div class="col-6">
+        <div class="card stat-card yellow h-100">
+          <div class="card-body">
+            <div class="text-muted small mb-1">Mopsy (gotówka)</div>
+            <div class="stat-number">{{ wallet.cash | int }} 🐾</div>
+            <small class="text-muted">Bank: {{ wallet.bank | int }} 🐾</small>
+          </div>
+        </div>
+      </div>
+      <div class="col-6">
+        <div class="card stat-card h-100">
+          <div class="card-body">
+            <div class="text-muted small mb-1">Sesje łącznie</div>
+            <div class="stat-number">{{ sessions | length }}</div>
+            <small class="text-muted">ostatnie 10</small>
+          </div>
+        </div>
+      </div>
+      <div class="col-6">
+        <div class="card stat-card red h-100">
+          <div class="card-body">
+            <div class="text-muted small mb-1">Status</div>
+            <div class="stat-number" style="font-size:1.3rem">
+              {% if user and user.is_clocked_in %}
+              <span class="active-dot me-1"></span>Aktywny
+              {% else %}
+              <span style="color:#99aab5">Offline</span>
+              {% endif %}
+            </div>
+            <small class="text-muted">{{ user.streak_days or 0 }} dni z rzędu</small>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Rank progress -->
+{% if auto_rank %}
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between mb-2">
+      <span class="text-white fw-semibold">
+        {{ auto_rank.icon }} {{ auto_rank.name }}
+      </span>
+      {% if next_rank %}
+      <span class="text-muted small">Następna: {{ next_rank.icon }} {{ next_rank.name }} ({{ next_rank.required_points }} pkt)</span>
+      {% else %}
+      <span class="text-muted small">Maksymalna ranga!</span>
+      {% endif %}
+    </div>
+    <div class="progress" style="height:8px;background:#40444b">
+      <div class="progress-bar" role="progressbar"
+           style="width:{{ progress }}%;background:var(--discord-blue)"
+           aria-valuenow="{{ progress }}" aria-valuemin="0" aria-valuemax="100"></div>
+    </div>
+    <small class="text-muted">{{ (user.points or 0) | r2 }} / {{ (next_rank.required_points if next_rank else (user.points or 0)) | r2 }} pkt</small>
+  </div>
+</div>
+{% endif %}
+
+<div class="row g-3">
+  <!-- Special ranks -->
+  {% if specials %}
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-header border-0 pb-0">
+        <span class="section-title"><i class="bi bi-award me-1"></i>Rangi specjalne</span>
+      </div>
+      <div class="card-body pt-2">
+        <div class="d-flex flex-wrap gap-2">
+          {% for s in specials %}
+          <span class="badge points-badge fs-6">{{ s.icon }} {{ s.name }}</span>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Jobs -->
+  {% if user_jobs %}
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-header border-0 pb-0">
+        <span class="section-title"><i class="bi bi-briefcase me-1"></i>Moje prace</span>
+      </div>
+      <div class="card-body pt-2">
+        <div class="d-flex flex-wrap gap-2">
+          {% for j in user_jobs %}
+          <span class="badge" style="background:{{ j.color or '#7289da' }}20;color:{{ j.color or '#7289da' }};border:1px solid {{ j.color or '#7289da' }}40;font-size:.85rem">
+            {{ j.icon }} {{ j.name }}
+          </span>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Recent sessions -->
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header border-0 pb-0">
+        <span class="section-title"><i class="bi bi-clock-history me-1"></i>Ostatnie sesje</span>
+      </div>
+      <div class="card-body pt-2">
+        {% if sessions %}
+        <div class="table-responsive">
+          <table class="table table-sm table-striped mb-0">
+            <thead>
+              <tr>
+                <th>Clock In</th>
+                <th>Clock Out</th>
+                <th>Czas</th>
+                <th>Punkty</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for s in sessions %}
+              <tr>
+                <td class="text-muted small">{{ s.clock_in | fmtdt }}</td>
+                <td class="text-muted small">{{ s.clock_out | fmtdt if s.clock_out else '<span class="active-dot"></span> Aktywna' | safe }}</td>
+                <td>
+                  {% if s.duration_hours %}
+                  {{ '%.1f h' | format(s.duration_hours) }}
+                  {% else %}—{% endif %}
+                </td>
+                <td>
+                  {% if s.points_earned %}
+                  <span class="text-success">+{{ '%.1f' | format(s.points_earned) }}</span>
+                  {% else %}—{% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="text-muted small mb-0">Brak sesji. Użyj <code>.clock</code> lub przycisku Clock In na serwerze.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endif %}
+
+<!-- Available commands -->
+<div class="card mt-4">
+  <div class="card-body">
+    <h6 class="text-white fw-bold mb-3"><i class="bi bi-terminal me-2" style="color:var(--discord-blue)"></i>Twoje komendy</h6>
+    {% if not uid %}
+    <p class="text-muted mb-0">Zaloguj się przez Discord żeby zobaczyć dostępne komendy.</p>
+    {% else %}
+    <div class="row g-2">
+    {% for group_name, cmds in command_groups.items() %}
+    {% set visible = [] %}
+    {% for cmd in cmds %}{% if user_perms.get(cmd, true) %}{% set _ = visible.append(cmd) %}{% endif %}{% endfor %}
+    {% if visible %}
+    <div class="col-md-4 col-sm-6">
+      <div class="mb-1"><small class="section-title">{{ group_name }}</small></div>
+      {% for cmd in visible %}
+      <button class="btn btn-sm btn-outline-secondary mb-1 run-cmd" data-cmd="{{ cmd }}" style="font-family:monospace">
+        .{{ cmd }}
+      </button>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% endfor %}
+    </div>
+    <div id="cmd-result" class="mt-3 d-none"></div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+{{ super() }}
+<script>
+document.querySelectorAll('.run-cmd').forEach(function(btn) {
+  btn.addEventListener('click', async function() {
+    const cmd = this.dataset.cmd;
+    const res = document.getElementById('cmd-result');
+    res.className = 'mt-3 alert alert-secondary';
+    res.textContent = 'Wysyłanie komendy .' + cmd + '...';
+    try {
+      const r = await fetch('/guild/{{ guild_id }}/command-panel', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: cmd, user_id: '{{ uid }}'})
+      });
+      const d = await r.json();
+      res.className = d.ok ? 'mt-3 alert alert-success' : 'mt-3 alert alert-warning';
+      res.textContent = d.message || (d.ok ? 'Komenda wysłana!' : 'Brak odpowiedzi bota');
+    } catch(e) {
+      res.className = 'mt-3 alert alert-danger';
+      res.textContent = 'Błąd: ' + e.message;
+    }
+  });
+});
+</script>
+{% endblock %}

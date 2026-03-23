@@ -71,7 +71,9 @@
   {% block extra_head %}{% endblock %}
 </head>
 <body>
-{% if session.get('logged_in') %}
+{% set _is_authed = session.get('logged_in') or session.get('discord_user_id') %}
+{% set _is_admin  = session.get('logged_in') %}
+{% if _is_authed %}
 <!-- Mobile top bar (hidden on desktop) -->
 <div class="mobile-nav" id="mobile-nav">
   <button class="btn btn-link p-0 text-white lh-1" id="sidebar-toggle" aria-label="Otwórz menu">
@@ -88,11 +90,41 @@
   <a class="sidebar-brand" href="{{ url_for('index') }}">
     <i class="bi bi-shield-fill me-2"></i>System Rang
   </a>
+  <!-- Discord user info pill -->
+  {% if session.get('discord_avatar') %}
+  <div class="px-3 mb-2 d-flex align-items-center gap-2">
+    <img src="{{ session.discord_avatar }}" class="avatar-sm" alt="">
+    <div>
+      <div class="text-white" style="font-size:.85rem;font-weight:600;line-height:1.2">{{ session.discord_username }}</div>
+      {% if _is_admin %}<small class="text-warning" style="font-size:.7rem">Admin</small>{% else %}<small class="text-muted" style="font-size:.7rem">Użytkownik</small>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   {% if guild_id is defined %}
-  <div class="px-3 mb-2">
+  <div class="px-3 mb-1">
     <small class="text-muted">{{ guild_name }}</small>
   </div>
   <ul class="nav flex-column">
+    <!-- Always visible for all users -->
+    <li class="nav-item">
+      <a class="nav-link {% if request.endpoint == 'user_dashboard' %}active{% endif %}"
+         href="{{ url_for('user_dashboard', guild_id=guild_id) }}">
+        <i class="bi bi-person-circle me-2"></i>Mój Profil
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link {% if request.endpoint == 'leaderboard_page' %}active{% endif %}"
+         href="{{ url_for('leaderboard_page', guild_id=guild_id) }}">
+        <i class="bi bi-trophy me-2"></i>Ranking
+      </a>
+    </li>
+
+    {% if _is_admin %}
+    <li class="nav-item"><hr class="mx-2 border-secondary my-1"></li>
+    <li class="nav-item">
+      <small class="px-3 text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;">Panel Admina</small>
+    </li>
     <li class="nav-item">
       <a class="nav-link {% if request.endpoint == 'guild_overview' %}active{% endif %}"
          href="{{ url_for('guild_overview', guild_id=guild_id) }}">
@@ -109,6 +141,12 @@
       <a class="nav-link {% if request.endpoint == 'ranks_page' %}active{% endif %}"
          href="{{ url_for('ranks_page', guild_id=guild_id) }}">
         <i class="bi bi-star me-2"></i>Rangi
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link {% if request.endpoint == 'rank_permissions_page' %}active{% endif %}"
+         href="{{ url_for('rank_permissions_page', guild_id=guild_id) }}">
+        <i class="bi bi-key me-2"></i>Uprawnienia Rang
       </a>
     </li>
     <li class="nav-item">
@@ -175,15 +213,18 @@
         <i class="bi bi-terminal me-2"></i>Lista Komend
       </a>
     </li>
+    {% endif %}
   </ul>
   <hr class="mx-3 border-secondary">
   {% endif %}
   <ul class="nav flex-column">
+    {% if _is_admin %}
     <li class="nav-item">
       <a class="nav-link" href="{{ url_for('index') }}">
         <i class="bi bi-grid me-2"></i>Wszystkie serwery
       </a>
     </li>
+    {% endif %}
     <li class="nav-item">
       <a class="nav-link text-danger" href="{{ url_for('logout') }}">
         <i class="bi bi-box-arrow-right me-2"></i>Wyloguj
@@ -193,7 +234,7 @@
 </nav>
 {% endif %}
 
-<div class="{% if session.get('logged_in') %}main-content{% else %}container-fluid{% endif %}">
+<div class="{% if _is_authed %}main-content{% else %}container-fluid{% endif %}">
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
       {% for cat, msg in messages %}
