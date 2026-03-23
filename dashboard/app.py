@@ -14,6 +14,13 @@ import database as db
 
 app = Flask(__name__, template_folder='templates')
 
+# Ensure DB tables exist (dashboard may start before or without the bot)
+try:
+    import database as _db_init
+    _db_init.init_db()
+except Exception:
+    pass
+
 def _get_secret_key():
     if s := os.environ.get('DASHBOARD_SECRET'):
         return s
