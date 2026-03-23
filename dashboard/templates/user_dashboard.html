@@ -957,43 +957,67 @@ function renderText(data) {
 // ── Shop ──
 function renderShop(data) {
   const inner = document.getElementById('result-inner');
-  const typeColor = {cosmetic:'#9b59b6',boost:'#f1c40f',consumable:'#e67e22',role:'#3498db'};
-  const typeLabel = {cosmetic:'Kosmetyczny',boost:'Boost',consumable:'Jednorazowy',role:'Rola'};
-  let h = `<div>
-    <div class="d-flex justify-content-between align-items-center mb-3">
-      <span class="fw-bold text-white" style="font-size:1rem">🛒 Sklep MOPS</span>
-      <span class="badge" style="background:rgba(250,166,26,.2);color:#faa61a">💰 Twoje mopsy: <strong>${data.cash}</strong> 🐾</span>
-    </div>
-    <div class="row g-2">`;
-  if (!data.items || !data.items.length) {
-    h += `<div class="col-12 text-muted text-center py-3">Sklep jest pusty. Admin może dodać przedmioty.</div>`;
-  }
-  for (const it of (data.items||[])) {
+  const typeColor   = {points_exchange:'#faa61a', cosmetic:'#9b59b6', boost:'#43b581', consumable:'#e67e22', role:'#3498db'};
+  const typeLabel   = {points_exchange:'⭐ Wymiana na punkty', cosmetic:'Kosmetyczny', boost:'Boost', consumable:'Jednorazowy', role:'Rola'};
+  // Sort: exchanges first, then rest
+  const sorted = [...(data.items||[])].sort((a,b) =>
+    (a.item_type==='points_exchange'?0:1) - (b.item_type==='points_exchange'?0:1));
+
+  const exchangeItems = sorted.filter(i=>i.item_type==='points_exchange');
+  const otherItems    = sorted.filter(i=>i.item_type!=='points_exchange');
+
+  function itemCard(it) {
     const tc = typeColor[it.item_type]||'#99aab5';
     const tl = typeLabel[it.item_type]||it.item_type;
     const canAfford = data.cash >= it.price;
+    const isExchange = it.item_type === 'points_exchange';
     const stockTxt = it.stock !== null ? `<span class="badge bg-secondary ms-1" style="font-size:.55rem">Szt: ${it.stock}</span>` : '';
-    const ownedTxt = it.owned ? `<span class="badge ms-1" style="font-size:.55rem;background:rgba(67,181,129,.2);color:#43b581">Posiadasz: ${it.owned}</span>` : '';
-    h += `<div class="col-6 col-md-4">
-      <div class="card h-100 p-2" style="border-color:${tc}33;background:#1e2124">
-        <div class="text-center fs-3 mb-1">${esc(it.icon)}</div>
-        <div class="fw-bold text-white text-center" style="font-size:.85rem">${esc(it.name)}</div>
-        <div class="text-muted text-center mb-1" style="font-size:.72rem">${esc(it.description)}</div>
+    const ownedTxt = it.owned ? `<span class="badge ms-1" style="font-size:.55rem;background:rgba(67,181,129,.2);color:#43b581">✓ ${it.owned}x</span>` : '';
+    return `<div class="col-6 col-md-4 col-lg-3">
+      <div class="card h-100 p-2" style="border-color:${tc}${isExchange?'88':'33'};background:${isExchange?'rgba(250,166,26,.05)':'#1e2124'}">
+        <div class="text-center mb-1" style="font-size:${isExchange?'2rem':'1.5rem'}">${esc(it.icon)}</div>
+        <div class="fw-bold text-white text-center" style="font-size:.83rem">${esc(it.name)}</div>
+        <div class="text-muted text-center mb-1" style="font-size:.7rem">${esc(it.description)}</div>
         <div class="d-flex justify-content-center align-items-center gap-1 flex-wrap mb-2">
-          <span class="badge" style="background:${tc}22;color:${tc};font-size:.6rem">${tl}</span>
+          <span class="badge" style="background:${tc}22;color:${tc};font-size:.58rem">${tl}</span>
           ${stockTxt}${ownedTxt}
         </div>
-        <div class="text-center fw-bold mb-2" style="color:#faa61a;font-size:.9rem">${it.price} 🐾</div>
-        <button class="btn btn-sm w-100 shop-buy-btn"
-                data-item="${esc(it.name)}"
-                style="background:${canAfford?'rgba(67,181,129,.2)':'rgba(99,99,99,.15)'};color:${canAfford?'#43b581':'#666'};border:1px solid ${canAfford?'#43b58144':'#44444488'}"
+        <div class="text-center fw-bold mb-2" style="color:#faa61a;font-size:.88rem">${it.price} 🐾</div>
+        <button class="btn btn-sm w-100 shop-buy-btn" data-item="${esc(it.name)}"
+                style="background:${canAfford?`${tc}22`:'rgba(80,80,80,.15)'};color:${canAfford?tc:'#555'};border:1px solid ${canAfford?`${tc}55`:'#44444466'}"
                 ${canAfford?'':'disabled'}>
-          ${canAfford?'🛒 Kup':'💸 Za drogi'}
+          ${isExchange?(canAfford?'⭐ Wymień':'💸 Za mało'):(canAfford?'🛒 Kup':'💸 Za drogi')}
         </button>
       </div>
     </div>`;
   }
-  h += '</div></div>';
+
+  let h = `<div>
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <span class="fw-bold text-white" style="font-size:1rem">🛒 Sklep MOPS</span>
+      <span class="badge" style="background:rgba(250,166,26,.2);color:#faa61a;font-size:.8rem">💰 ${data.cash} 🐾</span>
+    </div>`;
+
+  if (!sorted.length) {
+    h += `<div class="text-muted text-center py-3">Sklep jest pusty. Admin może dodać przedmioty.</div>`;
+  }
+  if (exchangeItems.length) {
+    h += `<div class="mb-1" style="font-size:.75rem;color:#faa61a;font-weight:600;letter-spacing:.04em">
+            ⭐ WYMIANA MOPSÓW NA PUNKTY
+          </div>
+          <div class="row g-2 mb-3">`;
+    for (const it of exchangeItems) h += itemCard(it);
+    h += '</div>';
+  }
+  if (otherItems.length) {
+    h += `<div class="mb-1" style="font-size:.75rem;color:#99aab5;font-weight:600;letter-spacing:.04em">
+            🏪 KOLEKCJONERSKIE I BOOSTY
+          </div>
+          <div class="row g-2">`;
+    for (const it of otherItems) h += itemCard(it);
+    h += '</div>';
+  }
+  h += '</div>';
   inner.innerHTML = h;
   document.getElementById('result-box').scrollIntoView({behavior:'smooth',block:'nearest'});
   // Buy button handlers
@@ -1015,11 +1039,16 @@ function renderShop(data) {
 // ── Buy result ──
 function renderBuyResult(data) {
   const inner = document.getElementById('result-inner');
+  const ptsBadge = data.bonus_pts > 0
+    ? `<div class="mt-2 fw-bold" style="color:#faa61a;font-size:1.1rem">+${data.bonus_pts} ⭐ punktów!</div>
+       <div class="text-muted" style="font-size:.8rem">Łącznie punktów: <strong>${data.pts_total}</strong></div>`
+    : '';
   inner.innerHTML = `<div class="text-center py-3">
     <div style="font-size:2.5rem;margin-bottom:.5rem">${esc(data.item_icon)}</div>
     <div class="fw-bold text-white mb-1" style="font-size:1.1rem">${esc(data.item_name)}</div>
-    <div class="text-success mb-2">✅ Kupiono za <strong>${data.price} 🐾</strong></div>
-    <div class="text-muted" style="font-size:.85rem">Pozostało: <strong>${data.cash_left} 🐾</strong></div>
+    <div class="text-success mb-1">✅ Kupiono za <strong>${data.price} 🐾</strong></div>
+    ${ptsBadge}
+    <div class="text-muted mt-2" style="font-size:.85rem">Pozostało: <strong>${data.cash_left} 🐾</strong></div>
     <button class="btn btn-sm mt-3" style="background:rgba(114,137,218,.2);color:#7289da"
             onclick="document.querySelector('[data-cmd=shop]')?.closest('.cmd-card')?.querySelector('.use-btn')?.click()">
       🛒 Wróć do sklepu

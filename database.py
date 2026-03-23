@@ -2300,8 +2300,26 @@ def buy_shop_item(user_id: int, guild_id: int, item_id: int) -> dict:
                    VALUES (?,?,?,1)
                    ON CONFLICT(user_id, guild_id, item_id) DO UPDATE SET quantity=quantity+1''',
                 (user_id, guild_id, item_id))
+            # If item gives points, add them now inside the same transaction
+            bonus_pts = 0
+            if item.get('item_type') == 'points_exchange':
+                try:
+                    data_obj = json.loads(item.get('data') or '{}')
+                    bonus_pts = float(data_obj.get('points', 0))
+                except Exception:
+                    bonus_pts = 0
+                if bonus_pts > 0:
+                    conn.execute(
+                        'UPDATE users SET points=points+? WHERE user_id=? AND guild_id=?',
+                        (bonus_pts, user_id, guild_id))
+                    conn.execute(
+                        '''INSERT INTO point_transactions
+                           (user_id, guild_id, amount, transaction_type, note)
+                           VALUES (?,?,?,?,?)''',
+                        (user_id, guild_id, bonus_pts, 'shop_exchange',
+                         f'Wymiana mopsów na punkty: {item["name"]}'))
             conn.commit()
-    return {'ok': True, 'item': item}
+    return {'ok': True, 'item': item, 'bonus_pts': bonus_pts}
 
 
 def get_user_inventory(user_id: int, guild_id: int) -> List[Dict]:
@@ -2322,15 +2340,32 @@ def seed_default_shop(guild_id: int) -> int:
     if existing:
         return 0
     defaults = [
-        {'name': 'VIP Tag',      'price': 500,  'icon': '👑', 'description': 'Ekskluzywny tag VIP na profilu',    'item_type': 'cosmetic'},
-        {'name': 'XP Boost x2', 'price': 300,  'icon': '⚡', 'description': 'Podwójna ilość punktów przez 1h',    'item_type': 'boost'},
-        {'name': 'Mopsy Luck',  'price': 200,  'icon': '🍀', 'description': '+20% szans na wygraną w kasynach',   'item_type': 'boost'},
-        {'name': 'Mikstura HP', 'price': 150,  'icon': '🧪', 'description': '+50 mopsów na starcie następnej gry','item_type': 'consumable'},
-        {'name': 'Rybka Złota', 'price': 1000, 'icon': '🐠', 'description': 'Rzadka rybka do kolekcji (limitowana!)', 'item_type': 'cosmetic', 'stock': 10},
-        {'name': 'Miecz Króla', 'price': 2500, 'icon': '⚔️', 'description': 'Symbol władzy — prestiżowy przedmiot', 'item_type': 'cosmetic', 'stock': 3},
+        # ── Wymiana Mopsów na Punkty (główna funkcja sklepu) ───────────────────
+        {'name': 'Garść Punktów',    'price': 50,   'icon': '⭐',
+         'description': 'Wymień 50 🐾 na 2 pkt aktywności',
+         'item_type': 'points_exchange', 'data': {'points': 2}},
+        {'name': 'Sakiewka Punktów', 'price': 200,  'icon': '💰',
+         'description': 'Wymień 200 🐾 na 10 pkt — drobny bonus!',
+         'item_type': 'points_exchange', 'data': {'points': 10}},
+        {'name': 'Skrzynia Punktów', 'price': 500,  'icon': '📦',
+         'description': 'Wymień 500 🐾 na 30 pkt — opłacalna wymiana',
+         'item_type': 'points_exchange', 'data': {'points': 30}},
+        {'name': 'Skarb Króla',      'price': 1000, 'icon': '👑',
+         'description': 'Wymień 1000 🐾 na 70 pkt — najlepsza oferta!',
+         'item_type': 'points_exchange', 'data': {'points': 70}},
+        # ── Kolekcjonerskie (MOPS) ─────────────────────────────────────────────
+        {'name': 'Odznaka Rekruta',  'price': 300,  'icon': '🎖️',
+         'description': 'Pamiątkowa odznaka dla nowych w Bazie MOPS',
+         'item_type': 'cosmetic'},
+        {'name': 'Herb Bazy MOPS',   'price': 800,  'icon': '🏰',
+         'description': 'Prestiżowy herb — symbol lojalności wobec Bazy',
+         'item_type': 'cosmetic', 'stock': 50},
+        {'name': 'Miecz Króla',      'price': 5000, 'icon': '⚔️',
+         'description': 'Legendarny miecz Króla — najrzadszy przedmiot w Bazie',
+         'item_type': 'cosmetic', 'stock': 5},
     ]
     for d in defaults:
         create_shop_item(guild_id, d['name'], d['price'], icon=d['icon'],
                          description=d['description'], item_type=d['item_type'],
-                         stock=d.get('stock'))
+                         stock=d.get('stock'), data=d.get('data'))
     return len(defaults)

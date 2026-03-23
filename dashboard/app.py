@@ -961,10 +961,14 @@ def user_run_command(guild_id):
         if not result['ok']:
             return jsonify({'ok': False, 'message': result['message']})
         it = result['item']
+        bonus_pts = result.get('bonus_pts', 0)
         w2 = db.get_wallet(uid, guild_id)
+        u2 = db.get_user(uid, guild_id) or {}
         return jsonify({'ok': True, 'type': 'buy_result',
             'item_name': it['name'], 'item_icon': it['icon'],
             'price': it['price'], 'cash_left': int(w2.get('cash') or 0),
+            'bonus_pts': bonus_pts,
+            'pts_total': round(u2.get('points', 0), 1),
             'message': f'Kupiono **{it["icon"]} {it["name"]}** za **{it["price"]} 🐾**!'})
 
     if cmd in ('inventory', 'inv', 'plecak'):
@@ -3982,12 +3986,30 @@ def setup_mops_run(guild_id):
         else:
             results.append(f'⏭️ Praca "{job_def["name"]}" już istnieje')
 
-    # ── 7. Guild config ───────────────────────────────────────────────────────
-    admin_ids = [rid for rid in [
-        role_map.get('Military Police'),
-        role_map.get('Alpha-1'),
-    ] if rid]
-    updates = {'admin_role_ids': json.dumps(admin_ids)}
+    # ── 7. Guild config + panel permission tiers ─────────────────────────────
+    # Mod panel access hierarchy (based on MOPS role structure):
+    #   mod     = Sierżant, Squad Leader          (warn/mute/kick-voice)
+    #   officer = Kapitan, faction leads/generals  (ban/addpoints/factions)
+    #   admin   = Generał, Książę, Król            (full access)
+    _mod_names     = ['Sierżant', 'Squad Leader']
+    _officer_names = ['Kapitan', 'Alpha-1', 'Nu-7', 'Epsilon-11',
+                      'Generał Nu-7', 'Generał Epsilon-11', 'Military Police']
+    _admin_names   = ['Generał', 'Książę', 'Król']
+
+    def _rids(names): return [role_map[n] for n in names if n in role_map]
+
+    mod_ids     = _rids(_mod_names)
+    officer_ids = _rids(_officer_names)
+    admin_ids   = _rids(_admin_names)
+
+    updates = {
+        'admin_role_ids':   json.dumps(admin_ids),
+        'officer_role_ids': json.dumps(officer_ids),
+        'mod_role_ids':     json.dumps(mod_ids),
+    }
+    results.append(
+        f'✅ Uprawnienia panelu: {len(mod_ids)} mod / {len(officer_ids)} officer / {len(admin_ids)} admin'
+    )
     for cfg_key, ch_name in [
         ('clock_channel_id',          'apel'),
         ('log_channel_id',            'logi'),
